@@ -33,10 +33,7 @@
 ;; popup 不是 GNU ELPA 包，所以 pyim 不能强制依赖它。
 (require 'popup nil t)
 (require 'pyim-common)
-(require 'pyim-preview)
-
-(eval-when-compile
-  (require 'pyim-entered))
+(require 'pyim-process)
 
 (defgroup pyim-page nil
   "Page tools for pyim."
@@ -129,48 +126,12 @@ Only useful when use posframe.")
 (defvar pyim-page-last-minibuffer-string nil
   "函数 `pyim-page-show-with-minibuffer' 上一次处理的消息字符串。")
 
-(defun pyim-page-current-page ()
-  "计算当前选择的词条在第几页面.
-
-细节信息请参考 `pyim-page-refresh' 的 docstring."
-  (1+ (/ (1- pyim-candidate-position) pyim-page-length)))
-
-(defun pyim-page-total-page ()
-  "计算 page 总共有多少页.
-
-细节信息请参考 `pyim-page-refresh' 的 docstring."
-  (1+ (/ (1- (length pyim-candidates)) pyim-page-length)))
-
-(defun pyim-page-start ()
-  "计算当前所在页的第一个词条的位置.
-
-细节信息请参考 `pyim-page-refresh' 的 docstring."
-  (let ((pos (min (length pyim-candidates) pyim-candidate-position)))
-    (1+ (* (/ (1- pos) pyim-page-length) pyim-page-length))))
-
-(defun pyim-page-end (&optional finish)
-  "计算当前所在页的最后一个词条的位置，
-
-如果 pyim-candidates 用完，则检查是否有补全。如果 FINISH 为
-non-nil，说明，补全已经用完了.
-
-细节信息请参考 `pyim-page-refresh' 的 docstring."
-  (let* ((whole (length pyim-candidates))
-         (len pyim-page-length)
-         (pos pyim-candidate-position)
-         (last (* (/ (+ (1- pos) len) len) len)))
-    (if (< last whole)
-        last
-      (if finish
-          whole
-        (pyim-page-end t)))))
-
 (defun pyim-page-refresh (&optional hightlight-current)
   "刷新 page 页面的函数.
 
-这个函数主要用来处理选词框选词后，刷新显示问题，pyim 使用
-`pyim-candidates' 来保存 *待选词列表* ，\"nihao\" 对应的
-`pyim-candidates' 的值类似：
+这个函数主要用来处理选词框选词后，刷新显示问题，
+
+\"nihao\" 对应的 *待选词列表* 类似：
 
      (\"你好\" \"倪皓\" \"泥\" \"你\"  ...  \"慝\")
 
@@ -185,8 +146,9 @@ page 的概念，比如，上面的 “nihao” 的 *待选词列表* 就可以�
   第4页   柅    猊    郳  輗  坭  惄  堄  儗  伲
   第5页   祢    慝
 
-`pyim-candidate-position' 的取值以及 `pyim-page-length' 的设定值
-（默认设置为9），共同决定了 pyim 需要显示哪一页，比如：
+`pyim-process-get-candidate-position' 的返回值以及
+`pyim-page-length' 的设定值（默认设置为9），共同决定了 pyim 需要
+显示哪一页，比如：
 
   第1页  你好  倪皓   泥    你  呢  拟  逆  腻  妮
   第2页  怩    溺     尼    禰  齯  麑  鲵  蜺  衵
@@ -194,287 +156,80 @@ page 的概念，比如，上面的 “nihao” 的 *待选词列表* 就可以�
   第4页  柅    猊     郳    輗  坭  惄  堄  儗  伲
   第5页  祢    慝
 
-假设当前选择的词条为 \"睨\", 那么 `pyim-candidate-position' 的取
-值为 A 所在的位置。那么：
+假设当前选择的词条为 \"睨\", 那么 `pyim-process-get-candidate-position'
+的返回值为 A 所在的位置。那么：
 
 1. 函数 `pyim-page-current-page' 返回值为3， 说明当前 page 为第3页。
 2. 函数 `pyim-page-total-page'  返回值为5，说明 page 共有5页。
 3. 函数 `pyim-page-start' 返回 B 所在的位置。
 4. 函数 `pyim-page-end' 返回 E 所在的位置。
-5. 函数 `pyim-page-refresh' 会从 `pyim-candidates' 中提取一个 sublist:
+5. 函数 `pyim-page-refresh' 会从待选词条列表中提取一个 sublist:
 
      (\"薿\" \"旎\" \"睨\" \"铌\" \"昵\" \"匿\" \"倪\" \"霓\" \"暱\")
 
-   这个 sublist 的起点为 `pyim-page-start' 的返回值，终点为
-   `pyim-page-end' 的返回值。并保存到一个 hashtable 的
-   :candidates 关键字对应的位置，这个 hastable 最终会做为参数传递
-   给 `pyim-page-style' 相关的函数，用于生成用于在选词框中显示的
-   字符串。"
-  (let* ((start (1- (pyim-page-start)))
-         (end (pyim-page-end))
-         (candidates pyim-candidates)
-         (candidate-showed
-          (mapcar (lambda (x)
-                    (let ((comment (get-text-property 0 :comment x)))
-                      (if comment
-                          (concat x comment)
-                        x)))
-                  (cl-subseq candidates start end)))
-         (pos (- (min pyim-candidate-position (length candidates)) start))
-         (page-info (make-hash-table))
-         (tooltip (pyim-page-get-valid-tooltip)))
-    (puthash :current-page (pyim-page-current-page) page-info)
-    (puthash :total-page (pyim-page-total-page) page-info)
-    (puthash :candidates candidate-showed page-info)
-    (puthash :position pos page-info)
-    (puthash :hightlight-current hightlight-current page-info)
+这个 sublist 的起点为 `pyim-page-start' 的返回值，终点为
+`pyim-page-end' 的返回值。并保存到一个 hashtable 的 :candidates
+关键字对应的位置，这个 hastable 最终会做为参数传递给
+`pyim-page-style' 相关的函数，用于生成用于在选词框中显示的字符串。"
+  (let* ((candidate-showed (pyim-page-get-showed-candidates))
+         (positon (pyim-page-get-selected-word-position))
+         (tooltip (pyim-page-get-valid-tooltip))
+         (style (pyim-page-get-page-style tooltip))
+         (page-info
+          (list :scheme (pyim-scheme-current)
+                :current-page (pyim-page-current-page)
+                :total-page (pyim-page-total-page)
+                :candidates candidate-showed
+                :position positon
+                :hightlight-current hightlight-current
+                :assistant-enable pyim-assistant-scheme-enable)))
     ;; Show page.
     (when (and (null unread-command-events)
                (null unread-post-input-method-events))
       (pyim-page-show
-       (pyim-page-info-format page-info tooltip)
-       (pyim-preview-start-point)
+       (pyim-page-info-format style page-info)
+       (funcall pyim-process-ui-position-function)
        tooltip))))
 
-(declare-function pyim-process-terminate "pyim-process")
+(add-hook 'pyim-process-ui-refresh-hook #'pyim-page-refresh)
 
-(defun pyim-page-next-page (arg)
-  "Pyim page 翻页命令.
+(defun pyim-page-get-showed-candidates ()
+  "从 CANDIDATES 中获取当前 page 显示需要显示的部分内容。"
+  (mapcar (lambda (x)
+            (let ((comment (get-text-property 0 :comment x)))
+              (if comment
+                  (concat x comment)
+                x)))
+          (cl-subseq (pyim-process-get-candidates)
+                     (1- (pyim-page-start))
+                     (pyim-page-end))))
 
-原理是：改变 `pyim-candidate-position' 的取值，假设一次只翻一页，
-那么这个函数所做的工作就是：
-1. 首先将 `pyim-candidate-position' 增加 `pyim-page-length' ，确
-   保其指定的位置在下一页。
-2. 然后将 `pyim-candidate-position' 的值设定为 `pyim-page-start'
-   的返回值，确保 `pyim-candidate-position' 的取值为下一页第一个
-   词条的位置。
-3. 最后调用 `pyim-page-refresh' 来重新刷新页面。"
-  (interactive "p")
-  (if (= (length (pyim-entered-get 'point-before)) 0)
-      (progn
-        (pyim-process-outcome-handle 'last-char)
-        (pyim-process-terminate))
-    (let ((new (+ pyim-candidate-position (* pyim-page-length arg) 1))
-          maxpos)
-      (setq maxpos (+ 1 (length pyim-candidates)))
-      (setq pyim-candidate-position
-            (if (> new 0)
-                (if (> new maxpos) 1 new)
-              maxpos)
-            pyim-candidate-position (pyim-page-start))
-      (pyim-preview-refresh)
-      (pyim-page-refresh))))
+(defun pyim-page-start (&optional candidate-position)
+  "计算当前所在页的第一个词条的位置.
 
-(defun pyim-page-previous-page (arg)
-  (interactive "p")
-  (pyim-page-next-page (- arg)))
+细节信息请参考 `pyim-page-refresh' 的 docstring."
+  (let ((pos (min (pyim-process-candidates-length)
+                  (or candidate-position
+                      (pyim-process-get-candidate-position)))))
+    (1+ (* (/ (1- pos) pyim-page-length) pyim-page-length))))
 
-(defun pyim-page-next-word (arg)
-  (interactive "p")
-  (if (= (length (pyim-entered-get 'point-before)) 0)
-      (progn
-        (pyim-process-outcome-handle 'last-char)
-        (pyim-process-terminate))
-    (let ((new (+ pyim-candidate-position arg))
-          len)
-      (setq len (length pyim-candidates))
-      (setq pyim-candidate-position
-            (if (>= len new)
-                (if (> new 0) new len)
-              1))
-      (pyim-preview-refresh)
-      (pyim-page-refresh t))))
+(defun pyim-page-end ()
+  "计算当前所在页的最后一个词条的位置，
 
-(defun pyim-page-previous-word (arg)
-  (interactive "p")
-  (pyim-page-next-word (- arg)))
+细节信息请参考 `pyim-page-refresh' 的 docstring."
+  (let* ((whole (pyim-process-candidates-length))
+         (len pyim-page-length)
+         (pos (pyim-process-get-candidate-position))
+         (last (* (/ (+ (1- pos) len) len) len)))
+    (if (< last whole)
+        last
+      whole)))
 
-(defun pyim-page-preview-create (&optional separator)
-  "这个函数用于创建在 page 中显示的预览字符串。
-
-这个预览是在 page 中显示，而 `pyim-preview-refresh' 对应的预览
-是在 buffer 光标处显示，两者要做区别。"
-  (let* ((scheme-name (pyim-scheme-name))
-         (class (pyim-scheme-get-option scheme-name :class)))
-    (when class
-      (funcall (intern (format "pyim-page-preview-create:%S" class)) separator))))
-
-(declare-function 'pyim-entered-with-entered-buffer "pyim-entered")
-
-(defun pyim-page-preview-create:quanpin (&optional separator)
-  (let* ((separator (or separator " "))
-         (translated (string-join (mapcar (lambda (w)
-                                            (concat (nth 0 w) (nth 1 w)))
-                                          (car pyim-imobjs))
-                                  separator)))
-    (concat
-     ;; | 显示光标位置的字符
-     (pyim-entered-with-entered-buffer
-       (if (equal 1 (point))
-           (concat "|" translated)
-         (concat (replace-regexp-in-string (concat separator "'") "'" translated)
-                 " |" (buffer-substring-no-properties (point) (point-max)))))
-     ;; 用于标记辅助输入法
-     (when (and (eq pyim-assistant-scheme 'quanpin)
-                (eq pyim-assistant-scheme-enable t))
-       (let ((code (pyim-cstring-to-xingma
-                    (nth (1- pyim-candidate-position)
-                         pyim-candidates)
-                    (pyim-scheme-name 'default))))
-         (if (> (length code) 0)
-             (format " [%s](辅)" code)
-           " (辅)"))))))
-
-(defun pyim-page-preview-create:shuangpin (&optional separator)
-  (let ((keymaps (pyim-scheme-get-option (pyim-scheme-name) :keymaps))
-        result)
-    (dolist (w (car pyim-imobjs))
-      (let ((sm (nth 0 w))
-            (ym (nth 1 w)))
-        (if (equal sm "")
-            (push (car (rassoc (list ym) keymaps)) result)
-          (push
-           (concat (cl-some
-                    (lambda (x)
-                      (when (equal sm (nth 1 x))
-                        (car x)))
-                    keymaps)
-                   (cl-some
-                    (lambda (x)
-                      (when (or (equal ym (nth 2 x))
-                                (equal ym (nth 3 x)))
-                        (car x)))
-                    keymaps))
-           result))))
-    (string-join (reverse result) (or separator " "))))
-
-(defun pyim-page-preview-create:xingma (&optional separator)
-  (let* ((scheme-name (pyim-scheme-name)))
-    (cl-flet* ((segment (x)
-                 (string-join
-                  (car (pyim-imobjs-create x scheme-name))
-                  (or separator " ")))
-               (fmt (x)
-                 (mapconcat #'segment
-                            (split-string x "'")
-                            "'")))
-      ;; | 显示光标位置的字符
-      (pyim-process-with-entered-buffer
-        (if (equal (point) (point-max))
-            (fmt (buffer-substring-no-properties (point-min) (point-max)))
-          (concat (fmt (buffer-substring-no-properties (point-min) (point)))
-                  "| "
-                  (fmt (buffer-substring-no-properties (point) (point-max)))))))))
-
-(defun pyim-page-menu-create (candidates position &optional separator hightlight-current)
-  "这个函数用于创建在 page 中显示的备选词条菜单。"
-  (let ((i 0) result)
-    (dolist (candidate candidates)
-      (let ((str (substring-no-properties
-                  (if (consp candidate)
-                      (concat (car candidate) (cdr candidate))
-                    candidate))))
-        (dolist (n pyim-outcome-subword-info)
-          (when (<= n (length str))
-            (set-text-properties (- n 1) n '(face pyim-page-subword) str)))
-        (setq i (1+ i))
-        ;; 高亮当前选择的词条，用于 `pyim-page-next-word'
-        (push
-         (if (and hightlight-current
-                  (= i position))
-             (format "%d%s" i
-                     (propertize
-                      (format "[%s]" str)
-                      'face 'pyim-page-selection))
-           (format "%d.%s " i str))
-         result)))
-    (string-join (nreverse result) (or separator ""))))
-
-(defun pyim-page-info-format (page-info tooltip)
-  "将 PAGE-INFO 按照 `pyim-page-style' 格式化为选词框中显示的字符串。"
-  (let ((style (or (cdr (assoc tooltip pyim-page-tooltip-style-alist))
-                   pyim-page-style)))
-    (let ((func (intern (format "pyim-page-style:%S" style))))
-      (if (functionp func)
-          (funcall func page-info)
-        (pyim-page-style:two-lines page-info)))))
-
-(defun pyim-page-style:two-lines (page-info)
-  "将 PAGE-INFO 格式化为选词框中显示的字符串.
-
-样式类似：
-
-+----------------------------+
-| ni hao [1/9]               |
-| 1.你好 2.你号 ...          |
-+----------------------------+"
-  (format "=> %s [%s/%s]: \n%s"
-          (pyim-page-preview-create)
-          (gethash :current-page page-info)
-          (gethash :total-page page-info)
-          (pyim-page-menu-create
-           (gethash :candidates page-info)
-           (gethash :position page-info)
-           nil
-           (gethash :hightlight-current page-info))))
-
-(defun pyim-page-style:one-line (page-info)
-  "将 PAGE-INFO 格式化为选词框中显示的字符串.
-
-样式类似：
-
-+-----------------------------------+
-| [ni hao]: 1.你好 2.你号 ... (1/9) |
-+-----------------------------------+"
-  (format "[%s]: %s(%s/%s)"
-          (pyim-page-preview-create " ")
-          (pyim-page-menu-create
-           (gethash :candidates page-info)
-           (gethash :position page-info)
-           nil
-           (gethash :hightlight-current page-info))
-          (gethash :current-page page-info)
-          (gethash :total-page page-info)))
-
-(defun pyim-page-style:vertical (page-info)
-  "将 PAGE-INFO 格式化为选词框中显示的字符串.
-
-样式类似：
-
-+--------------+
-| ni hao [1/9] |
-| 1.你好       |
-| 2.你号 ...   |
-+--------------+"
-  (format "=> %s [%s/%s]: \n%s"
-          (pyim-page-preview-create)
-          (gethash :current-page page-info)
-          (gethash :total-page page-info)
-          (pyim-page-menu-create
-           (gethash :candidates page-info)
-           (gethash :position page-info)
-           "\n"
-           (gethash :hightlight-current page-info))))
-
-(defun pyim-page-style:minibuffer (page-info)
-  "将 PAGE-INFO 格式化为选词框中显示的字符串.
-
-样式类似：
-
-+------------------------------------+
-| [ni hao]: 1.你好 2.你号 ...  (1/9) |
-+------------------------------------+"
-  ;; 在 minibuffer 中显示 page 的时候，page 字符串直接插入到 minibuffer 现有的内
-  ;; 容中, 为了便于区分，在 page 后面添加一个显眼的字符。
-  (format "[%-15s]: %s(%s/%s) $ "
-          (pyim-page-preview-create)
-          (pyim-page-menu-create
-           (gethash :candidates page-info)
-           (gethash :position page-info)
-           nil
-           (gethash :hightlight-current page-info))
-          (gethash :current-page page-info)
-          (gethash :total-page page-info)))
+(defun pyim-page-get-selected-word-position ()
+  "获取当前选择的词条在 candidates 中的位置。"
+  (- (min (pyim-process-get-candidate-position)
+          (pyim-process-candidates-length))
+     (1- (pyim-page-start))))
 
 (defun pyim-page-get-valid-tooltip ()
   "获取一个可用的 tooltip."
@@ -497,29 +252,49 @@ page 的概念，比如，上面的 “nihao” 的 *待选词列表* 就可以�
                         (list pyim-page-tooltip)))
           'minibuffer))))
 
-(defun pyim-page-show (string position tooltip)
-  "在 POSITION 位置，使用 posframe 或者 popup 显示字符串 STRING."
-  (cond ((eq tooltip 'posframe)
-         (posframe-show pyim-page-posframe-buffer
-                        :string string
-                        :position position
-                        :min-width pyim-page-posframe-min-width
-                        :background-color (face-attribute 'pyim-page :background)
-                        :foreground-color (face-attribute 'pyim-page :foreground)
-                        :border-width pyim-page-posframe-border-width
-                        :border-color (face-attribute 'pyim-page-border :background)))
-        ((eq tooltip 'popup)
-         (pyim-page-show-with-popup :string string
-                                    :position position))
-        (t (pyim-page-show-with-minibuffer string))))
+(defun pyim-page-get-page-style (tooltip)
+  "依照 TOOLTIP 和 `pyim-page-style', 得到一个 page style."
+  (or (cdr (assoc tooltip pyim-page-tooltip-style-alist))
+      pyim-page-style))
 
-(defun pyim-page-show-with-minibuffer (string)
+(defun pyim-page-current-page ()
+  "计算当前选择的词条在第几页面.
+
+细节信息请参考 `pyim-page-refresh' 的 docstring."
+  (1+ (/ (1- (pyim-process-get-candidate-position)) pyim-page-length)))
+
+(defun pyim-page-total-page ()
+  "计算 page 总共有多少页.
+
+细节信息请参考 `pyim-page-refresh' 的 docstring."
+  (1+ (/ (1- (pyim-process-candidates-length)) pyim-page-length)))
+
+(cl-defgeneric pyim-page-show (string position tooltip)
+  "在 POSITION 位置，使用 posframe 或者 popup 显示字符串 STRING.")
+
+(cl-defmethod pyim-page-show (string position (_tooltip (eql posframe)))
+  "在 POSITION 位置，使用 posframe STRING."
+  (posframe-show pyim-page-posframe-buffer
+                 :string string
+                 :position position
+                 :min-width pyim-page-posframe-min-width
+                 :background-color (face-attribute 'pyim-page :background)
+                 :foreground-color (face-attribute 'pyim-page :foreground)
+                 :border-width pyim-page-posframe-border-width
+                 :border-color (face-attribute 'pyim-page-border :background)))
+
+(cl-defmethod pyim-page-show (string _position (_tooltip (eql minibuffer)))
   "使用 minibuffer 来显示 STRING。"
   (let ((max-mini-window-height (+ pyim-page-length 2))
         (message-log-max nil))
     (if (not (eq (selected-window) (minibuffer-window)))
         (message string)
       (message nil)
+      ;; 在类似 vertico-posframe 这样的环境中，posframe window-point 同步问题不
+      ;; 太好处理，这里使用一个简单粗暴的方式：在输入过程中，隐藏真实的 cursor
+      ;; 并显示一个伪 cursor, 输入完成之后再恢复。
+      (setq-local cursor-type nil)
+
       ;; 异步获取词条的时候，上一次的 page 字符串可能还在 Minibuffer 中，所以首
       ;; 先要将其去除，否则会出现两个 page.
       (delete-char (length pyim-page-last-minibuffer-string))
@@ -527,6 +302,8 @@ page 的概念，比如，上面的 “nihao” 的 *待选词列表* 就可以�
         (insert
          (setq pyim-page-last-minibuffer-string
                (concat
+                ;; 显示一个伪 cursor.
+                (propertize " " 'face 'cursor)
                 (or pyim-page-minibuffer-separator
                     (let* ((width (string-width (buffer-string)))
                            (n (- (* 20 (+ 1 (/ width 20))) width)))
@@ -537,7 +314,7 @@ page 的概念，比如，上面的 “nihao” 的 *待选词列表* 就可以�
 (declare-function 'popup-delete "popup")
 (defvar popup-version)
 
-(cl-defun pyim-page-show-with-popup (&key string position)
+(cl-defmethod pyim-page-show (string position (_tooltip (eql popup)))
   "Show STRING at POSITION with the help of popup-el."
   (when pyim-page-last-popup
     ;; 异步获取词条的时候，如果不把已经存在的 popup 删除，就会出现两个 page.
@@ -549,18 +326,237 @@ page 的概念，比如，上面的 “nihao” 的 *待选词列表* 就可以�
                (unless (version<= popup-version "0.5.8")
                  (list :face 'pyim-page)))))
 
+(cl-defgeneric pyim-page-info-format (style page-info)
+  "将 PAGE-INFO 按照 STYLE 格式化为选词框中显示的字符串。")
+
+(cl-defmethod pyim-page-info-format (_style page-info)
+  "将 PAGE-INFO 格式化为选词框中显示的字符串.
+
+样式类似：
+
++----------------------------+
+| ni hao [1/9]               |
+| 1.你好 2.你号 ...          |
++----------------------------+"
+  (format "=> %s%s [%s/%s]: \n%s"
+          (pyim-page-preview-create
+           (plist-get page-info :scheme))
+          (if (plist-get page-info :assistant-enable) " (辅)" "")
+          (plist-get page-info :current-page)
+          (plist-get page-info :total-page)
+          (pyim-page-menu-create
+           (plist-get page-info :candidates)
+           (plist-get page-info :position)
+           nil
+           (plist-get page-info :hightlight-current))))
+
+(cl-defmethod pyim-page-info-format ((_style (eql one-line)) page-info)
+  "将 PAGE-INFO 格式化为选词框中显示的字符串.
+
+样式类似：
+
++-----------------------------------+
+| [ni hao]: 1.你好 2.你号 ... (1/9) |
++-----------------------------------+"
+  (format "[%s%s]: %s(%s/%s)"
+          (pyim-page-preview-create
+           (plist-get page-info :scheme) " ")
+          (if (plist-get page-info :assistant-enable) " (辅)" "")
+          (pyim-page-menu-create
+           (plist-get page-info :candidates)
+           (plist-get page-info :position)
+           nil
+           (plist-get page-info :hightlight-current))
+          (plist-get page-info :current-page)
+          (plist-get page-info :total-page)))
+
+(cl-defmethod pyim-page-info-format ((_style (eql vertical)) page-info)
+  "将 PAGE-INFO 格式化为选词框中显示的字符串.
+
+样式类似：
+
++--------------+
+| ni hao [1/9] |
+| 1.你好       |
+| 2.你号 ...   |
++--------------+"
+  (format "=> %s%s [%s/%s]: \n%s"
+          (pyim-page-preview-create
+           (plist-get page-info :scheme))
+          (if (plist-get page-info :assistant-enable) " (辅)" "")
+          (plist-get page-info :current-page)
+          (plist-get page-info :total-page)
+          (pyim-page-menu-create
+           (plist-get page-info :candidates)
+           (plist-get page-info :position)
+           "\n"
+           (plist-get page-info :hightlight-current))))
+
+(cl-defmethod pyim-page-info-format ((_style (eql minibuffer)) page-info)
+  "将 PAGE-INFO 格式化为选词框中显示的字符串.
+
+样式类似：
+
++------------------------------------+
+| [ni hao]: 1.你好 2.你号 ...  (1/9) |
++------------------------------------+"
+  ;; 在 minibuffer 中显示 page 的时候，page 字符串直接插入到 minibuffer 现有的内
+  ;; 容中, 为了便于区分，在 page 后面添加一个显眼的字符。
+  (format "[%-15s%s]: %s(%s/%s) $ "
+          (pyim-page-preview-create
+           (plist-get page-info :scheme))
+          (if (plist-get page-info :assistant-enable) " (辅)" "")
+          (pyim-page-menu-create
+           (plist-get page-info :candidates)
+           (plist-get page-info :position)
+           nil
+           (plist-get page-info :hightlight-current))
+          (plist-get page-info :current-page)
+          (plist-get page-info :total-page)))
+
+(cl-defgeneric pyim-page-preview-create (scheme &optional separator)
+  "这个函数用于创建在 page 中显示的预览字符串。
+
+这个预览是在 page 中显示，而 `pyim-preview-refresh' 对应的预览
+是在 buffer 光标处显示，两者要做区别。")
+
+(cl-defmethod pyim-page-preview-create ((_scheme pyim-scheme-quanpin) &optional separator)
+  (let* ((separator (or separator " "))
+         (translated (string-join (mapcar (lambda (w)
+                                            (concat (nth 0 w) (nth 1 w)))
+                                          (pyim-process-get-first-imobj))
+                                  separator)))
+    (concat
+     ;; | 显示光标位置的字符
+     (pyim-process-with-entered-buffer
+       (if (equal 1 (point))
+           (concat "|" translated)
+         (concat (replace-regexp-in-string (concat separator "'") "'" translated)
+                 " |" (buffer-substring-no-properties (point) (point-max))))))))
+
+(cl-defmethod pyim-page-preview-create ((scheme pyim-scheme-shuangpin) &optional separator)
+  (let ((keymaps (pyim-scheme-shuangpin-keymaps scheme))
+        result)
+    (dolist (w (pyim-process-get-first-imobj))
+      (let ((sm (nth 0 w))
+            (ym (nth 1 w)))
+        (if (equal sm "")
+            (push (car (rassoc (list ym) keymaps)) result)
+          (push
+           (concat (cl-some
+                    (lambda (x)
+                      (when (equal sm (nth 1 x))
+                        (car x)))
+                    keymaps)
+                   (cl-some
+                    (lambda (x)
+                      (when (or (equal ym (nth 2 x))
+                                (equal ym (nth 3 x)))
+                        (car x)))
+                    keymaps))
+           result))))
+    (string-join (reverse result) (or separator " "))))
+
+(cl-defmethod pyim-page-preview-create ((_scheme pyim-scheme-xingma) &optional _separator)
+  ;; | 显示光标位置的字符
+  (pyim-process-with-entered-buffer
+    (if (equal (point) (point-max))
+        (buffer-substring-no-properties (point-min) (point-max))
+      (concat (buffer-substring-no-properties (point-min) (point))
+              "| "
+              (buffer-substring-no-properties (point) (point-max))))))
+
+(defun pyim-page-menu-create (candidates position &optional separator hightlight-current)
+  "这个函数用于创建在 page 中显示的备选词条菜单。"
+  (let ((i 0) result)
+    (dolist (candidate candidates)
+      (let ((str (substring-no-properties
+                  (if (consp candidate)
+                      (concat (car candidate) (cdr candidate))
+                    candidate))))
+        (dolist (n (pyim-process-get-outcome-subword-info))
+          (when (<= n (length str))
+            (set-text-properties (- n 1) n '(face pyim-page-subword) str)))
+        (setq i (1+ i))
+        ;; 高亮当前选择的词条，用于 `pyim-page-next-word'
+        (push
+         (if (and hightlight-current
+                  (= i position))
+             (format "%d%s" i
+                     (propertize
+                      (format "[%s]" str)
+                      'face 'pyim-page-selection))
+           (format "%d.%s " i str))
+         result)))
+    (string-join (nreverse result) (or separator ""))))
+
+(defun pyim-page-next-page (arg)
+  "Pyim page 翻页命令."
+  (interactive "p")
+  (if (= (length (pyim-process-get-entered 'point-before)) 0)
+      (progn
+        (pyim-process-outcome-handle 'last-char)
+        (pyim-process-terminate))
+    (let* ((new (+ (pyim-process-get-candidate-position)
+                   (* pyim-page-length arg) 1))
+           (maxpos (+ 1 (pyim-process-candidates-length))))
+      (pyim-process-set-candidate-position
+       (pyim-page-start
+        (if (> new 0)
+            (if (> new maxpos) 1 new)
+          maxpos)))
+      (pyim-process-ui-refresh))))
+
+(defun pyim-page-previous-page (arg)
+  (interactive "p")
+  (pyim-page-next-page (- arg)))
+
+(defun pyim-page-next-word (arg)
+  (interactive "p")
+  (if (= (length (pyim-process-get-entered 'point-before)) 0)
+      (progn
+        (pyim-process-outcome-handle 'last-char)
+        (pyim-process-terminate))
+    (let ((new (+ (pyim-process-get-candidate-position) arg))
+          (len (pyim-process-candidates-length)))
+      (pyim-process-set-candidate-position
+       (if (>= len new)
+           (if (> new 0) new len)
+         1))
+      (pyim-process-ui-refresh 'hightlight-current))))
+
+(defun pyim-page-previous-word (arg)
+  (interactive "p")
+  (pyim-page-next-word (- arg)))
+
 (defun pyim-page-hide ()
   "Hide pyim page."
-  (let ((tooltip (pyim-page-get-valid-tooltip)))
-    (cond
-     ((eq tooltip 'popup)
-      (popup-delete pyim-page-last-popup))
-     ((eq tooltip 'posframe)
-      (posframe-hide pyim-page-posframe-buffer))
-     (t (when (eq (selected-window) (minibuffer-window))
-          ;; 从 minibuffer 中删除 page 字符串。
-          (delete-char (length pyim-page-last-minibuffer-string)))
-        (setq pyim-page-last-minibuffer-string nil)))))
+  (pyim-page-hide-tooltip (pyim-page-get-valid-tooltip)))
+
+(cl-defgeneric pyim-page-hide-tooltip (tooltip)
+  "Hide TOOLTIP.")
+
+(cl-defmethod pyim-page-hide-tooltip ((_tooltip (eql popup)))
+  "Hide popup tooltip."
+  (popup-delete pyim-page-last-popup))
+
+(cl-defmethod pyim-page-hide-tooltip ((_tooltip (eql posframe)))
+  "Hide posframe tooltip."
+  (posframe-hide pyim-page-posframe-buffer))
+
+(cl-defmethod pyim-page-hide-tooltip ((_tooltip (eql minibuffer)))
+  "Hide minibuffer tooltip."
+  (popup-delete pyim-page-last-popup)
+  (when (eq (selected-window) (minibuffer-window))
+    ;; 从 minibuffer 中删除 page 字符串。
+    (delete-char (length pyim-page-last-minibuffer-string))
+    ;; 在类似 vertico-posframe 这样的环境中，posframe window-point 同步问题
+    ;; 不太好处理，这里使用一个简单粗暴的方式：在输入过程中，隐藏真实的
+    ;; cursor 并显示一个伪 cursor, 输入完成之后再恢复。
+    (setq-local cursor-type t))
+  (setq pyim-page-last-minibuffer-string nil))
+
+(add-hook 'pyim-process-ui-hide-hook #'pyim-page-hide)
 
 ;; * Footer
 (provide 'pyim-page)

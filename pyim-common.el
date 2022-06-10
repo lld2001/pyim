@@ -30,6 +30,8 @@
 
 ;;; Code:
 ;; * 代码                                                                 :code:
+(require 'cl-lib)
+(require 'subr-x)
 
 (defgroup pyim-common nil
   "pyim common."
@@ -75,7 +77,7 @@
 
 (defun pyim-permutate-list (list)
   "使用排列组合的方式重新排列 LIST.
-这个函数由 ‘二中’ 提供。"
+这个函数由 \"二中\" 提供。"
   (let ((list-head (car list))
         (list-tail (cdr list)))
     (cond ((null list-tail)
@@ -130,7 +132,7 @@ When CARE-FIRST-ONE is no-nil, ((a b c) (d e)) => (a d)."
     (nreverse output)))
 
 (defun pyim-char-before-to-string (num)
-  "得到光标前第 `num' 个字符，并将其转换为字符串。"
+  "得到光标前第 NUM 个字符，并将其转换为字符串。"
   (let* ((point (point))
          (point-before (- point num)))
     (when (and (> point-before 0)
@@ -138,7 +140,7 @@ When CARE-FIRST-ONE is no-nil, ((a b c) (d e)) => (a d)."
       (char-to-string (char-before point-before)))))
 
 (defun pyim-char-after-to-string (num)
-  "得到光标后第 `num' 个字符，并将其转换为字符串。"
+  "得到光标后第 NUM 个字符，并将其转换为字符串。"
   (let* ((point (point))
          (point-after (+ point num)))
     (when (char-after point-after)
@@ -166,6 +168,22 @@ When CARE-FIRST-ONE is no-nil, ((a b c) (d e)) => (a d)."
 	             (+ (if (equal (aref s1 (1- i)) (aref s2 (1- j))) 0 1)
 		            (funcall in (1- i) (1- j)))))))
       (funcall in l1 l2))))
+
+(defun pyim-proportion (nums)
+  "计算 NUMS 所占比例。"
+  (let ((sum (float (apply #'+ nums))))
+    (mapcar
+     (lambda (n)
+       (/ n sum))
+     nums)))
+
+(defun pyim-numbers> (a b)
+  "比较数字列表 A 和 B."
+  (if (and (car a) (car b)
+           (equal (car a) (car b)))
+      (pyim-numbers> (cdr a) (cdr b))
+    (> (or (car a) 0)
+       (or (car b) 0))))
 
 (defun pyim-add-unread-command-events (key &optional reset)
   "This function is a fork of `quail-add-unread-command-events'."

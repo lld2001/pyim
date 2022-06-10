@@ -34,13 +34,9 @@
 (require 'pyim-entered)
 (require 'pyim-imobjs)
 (require 'pyim-codes)
-(require 'pyim-page)
 (require 'pyim-candidates)
-(require 'pyim-preview)
-(require 'pyim-indicator)
 (require 'pyim-outcome)
 (require 'pyim-punctuation)
-(require 'pyim-autoselector)
 (require 'pyim-cstring)
 
 (defgroup pyim-process nil
@@ -54,9 +50,7 @@
 运行结果为 t 时，pyim 开启英文输入功能。"
   :type 'symbol)
 
-(defcustom pyim-force-input-chinese-functions
-  (list 'pyim-probe-exwm-xim-environment
-        'pyim-probe-xwidget-webkit-environment)
+(defcustom pyim-force-input-chinese-functions nil
   "让 pyim 强制输入中文.
 
 这个变量的取值为一个函数列表，这个函数列表中的任意一个函数的运行
@@ -64,14 +58,34 @@
 `pyim-english-input-switch-functions' 的设置."
   :type 'symbol)
 
-(defcustom pyim-exhibit-delay-ms 0
-  "输入或者删除拼音字符后等待多少毫秒后才显示可选词
-当用户快速输入连续的拼音时可提升用户体验.
-如果为 0 或者 nil, 则不等待立刻显示可选词."
-  :type 'integer)
+(defvaralias 'pyim-autoselector 'pyim-process-autoselector)
+(defcustom pyim-process-autoselector nil
+  "已经启用的自动上屏器.
 
-(defcustom pyim-process-async-delay 0.3
-  "延迟多少秒开始异步获取词条。"
+自动上屏器是一个函数。假设用户已经输入 \"nihao\", 并按下 \"m\" 键，
+那么当前entered 就是 \"nihaom\". 上次 entered 是 \"nihao\". 那么
+返回值有3种情况（优先级按照下面的顺序）：
+
+1. (:select last :replace-with \"xxx\") 自动上屏上次
+entered (nihao) 的第一个候选词，m 键下一轮处理。
+
+2. (:select current :replace-with \"xxx\") 自动上屏当前
+entered (nihaom) 的第一个候选词。
+
+3. nil  不自动上屏。
+
+如果 :replace-with 设置为一个字符串，则选择最终会被这个字符串替代。
+
+注意：多个 autoselector 函数运行时，最好不要相互影响，如果相互有
+影响，需要用户自己管理。"
+  :type '(choice (const nil)
+                 (repeat function)))
+
+(define-obsolete-variable-alias
+  'pyim-process-async-delay 'pyim-process-run-delay "5.0")
+
+(defcustom pyim-process-run-delay 0.5
+  "延迟多少秒开始延迟获取词条。"
   :type 'integer)
 
 (defvar pyim-process-input-ascii nil
@@ -89,50 +103,128 @@
 (defvar pyim-process-last-created-words nil
   "记录最近创建的词条， 用于实现快捷删词功能： `pyim-delete-last-word' .")
 
-(defvar pyim-process-run-async-timer nil
+(defvar pyim-process-code-criteria nil
+  "用于 code 选取的基准字符串。
+
+当获取到一个词条的多个 codes 时， pyim 会将所有的 codes 与这个字
+符串进行比较，然后选择一个与这个字符串最相似的 code.
+
+这个变量主要用于全拼和双拼输入法的多音字矫正，其取值一般使用用户
+输入生成的 imobjs 转换得到，保留了用户原始输入的许多信息。")
+
+(defvar pyim-process-run-delay-timer nil
   "异步处理 entered 时，使用的 timer.")
 
 (defvar pyim-process-self-insert-commands nil
   "保存所有的 self insert command.")
 
-(defvar pyim-process-run-exhibit-timer nil)
+(defvar pyim-process-ui-init-hook nil
+  "Hook used to run ui init functions.")
+
+(defvar pyim-process-ui-refresh-hook nil
+  "Hook used to run ui refresh functions.")
+
+(defvar pyim-process-ui-hide-hook nil
+  "Hook used to run ui hide functions.")
+
+(defvar pyim-process-ui-position-function #'point
+  "The value is a function returned a position where ui place.")
+
+(defvar pyim-process-start-daemon-hook nil
+  "Pyim start daemon hook.")
+
+(defvar pyim-process-stop-daemon-hook nil
+  "Pyim stop daemon hook.")
+
+(defvar pyim-process-imobjs nil
+  "Imobj (Input method object) 组成的 list.
+
+imobj 在 pyim 里面的概念，类似与编译器里面的语法树，
+它代表 pyim 输入的字符串 entered 解析得到的一个结构化对象，
+以全拼输入法的为例：
+
+1. entered: nihaoma
+2. imobj: ((\"n\" \"i\" \"n\" \"i\") (\"h\" \"ao\" \"h\" \"ao\") (\"m\" \"a\" \"m\" \"a\"))
+
+而 imobjs 是 imobj 组成的一个列表，因为有模糊音等概念的存在，一个
+entered 需要以多种方式或者多步骤解析，得到多种可能的 imobj, 这些
+imobj 组合构成在一起，构成了 imobjs 这个概念。比如：
+
+1. entered: guafeng (设置了模糊音 en -> eng)
+2. imobj-1: ((\"g\" \"ua\" \"g\" \"ua\") (\"f\" \"en\" \"f\" \"eng\"))
+3. imobj-2: ((\"g\" \"ua\" \"g\" \"ua\") (\"f\" \"eng\" \"f\" \"eng\"))
+4. imobjs:  (((\"g\" \"ua\" \"g\" \"ua\") (\"f\" \"en\" \"f\" \"eng\"))
+             ((\"g\" \"ua\" \"g\" \"ua\") (\"f\" \"eng\" \"f\" \"eng\")))
+
+这个变量用来保存解析得到的 imobjs。
+
+解析完成之后，pyim 会为每一个 imobj 创建对应 code 字符串, 然后在词库
+中搜索 code 字符串来得到所需要的词条，最后使用特定的方式将得到的
+词条组合成一个候选词列表：`pyim-candidates' 并通过 pyim-page 相关
+功能来显示选词框，供用户选择词条，比如：
+
+1. imobj: ((\"g\" \"ua\" \"g\" \"ua\") (\"f\" \"en\" \"f\" \"en\"))
+2. code: gua-fen
+
+从上面的说明可以看出，imobj 本身也是有结构的：
+
+1. imobj: ((\"g\" \"ua\" \"g\" \"ua\") (\"f\" \"en\" \"f\" \"en\"))
+
+我们将 (\"g\" \"ua\" \"g\" \"ua\") 这些子结构，叫做 imelem (IM element), *大
+多数情况下*, 一个 imelem 能够代表一个汉字，这个概念在编辑 entered
+的时候，非常有用。
+
+另外要注意的是，不同的输入法， imelem 的内部结构是不一样的，比如：
+1. quanping:  (\"g\" \"ua\" \"g\" \"ua\")
+2. shuangpin: (\"h\" \"ao\" \"h\" \"c\")
+3. wubi:      (\"aaaa\")")
+
+(defvar pyim-process-candidates nil
+  "所有备选词条组成的列表.")
+
+(defvar pyim-process-candidates-last nil
+  "上一轮备选词条列表，这个变量主要用于 autoselector 机制.")
+
+(defvar pyim-process-candidate-position nil
+  "当前选择的词条在 `pyim-candidates’ 中的位置.
+
+细节信息请参考 `pyim-page-refresh' 的 docstring.")
 
 (pyim-register-local-variables
  '(pyim-process-input-ascii
-   pyim-process-translating))
+   pyim-process-translating
+   pyim-process-imobjs
+   pyim-process-candidates
+   pyim-process-candidate-position))
+
+(defun pyim-process-ui-init ()
+  "初始化 pyim 相关 UI."
+  (run-hooks 'pyim-process-ui-init-hook))
 
 (defun pyim-process-init-dcaches (&optional force)
   "PYIM 流程，词库相关的初始化工作。"
   (pyim-recreate-local-variables)
   (pyim-pymap-cache-create)
+  (pyim-dcache-init-variables)
   (pyim-dcache-update force))
 
 (defun pyim-process-save-dcaches (&optional force)
   "PYIM 流程，保存 dcache."
   (when force
-    (pyim-dcache-save-caches)))
+    (pyim-dcache-save-caches))
+  t)
 
-(defun pyim-process-update-personal-words ()
-  (pyim-dcache-call-api 'update-personal-words t))
-
-(defun pyim-process-init-ui ()
-  "PYIM 流程，用户界面相关的初始化工作。"
-  (pyim-preview-setup-overlay))
+(defun pyim-process-update (&optional force)
+  (pyim-dcache-update force))
 
 (defun pyim-process-start-daemon ()
-  "启动 pyim 流程需要的相关 daemon."
-  (pyim-indicator-start-daemon #'pyim-process-indicator-function))
+  "启动 pyim 流程需要的 daemon."
+  (run-hooks 'pyim-process-start-daemon-hook))
 
 (defun pyim-process-stop-daemon ()
   "关闭 pyim 流程已经启动的 daemon."
   (interactive)
-  ;; 只有其它的 buffer 中没有启动 pyim 时，才停止 daemon.
-  ;; 因为 daemon 是服务所有 buffer 的。
-  (unless (cl-find-if
-           (lambda (buf)
-             (buffer-local-value 'current-input-method buf))
-           (remove (current-buffer) (buffer-list)))
-    (pyim-indicator-stop-daemon)))
+  (run-hooks 'pyim-process-stop-daemon-hook))
 
 (defmacro pyim-process-with-entered-buffer (&rest forms)
   "PYIM 流程的输入保存在一个 buffer 中，使用 FORMS 处理这个 buffer
@@ -149,11 +241,11 @@
 
 如果 SEARCH-FORWARD 为 t, 则向前搜索，反之，向后搜索。"
   (pyim-entered-with-entered-buffer
-    (let* ((scheme-name (pyim-scheme-name))
+    (let* ((scheme (pyim-scheme-current))
            (start (or start (point)))
            (end-position start)
            (string (buffer-substring-no-properties (point-min) start))
-           (orig-imobj-len (length (car (pyim-imobjs-create string scheme-name))))
+           (orig-imobj-len (length (car (pyim-imobjs-create string scheme))))
            imobj pos)
       (if search-forward
           ;; "ni|haoshijie" -> "nihao|shijie"
@@ -161,7 +253,7 @@
             (setq pos (point-max))
             (while (and (> pos start) (= end-position start))
               (setq string (buffer-substring-no-properties (point-min) pos)
-                    imobj (car (pyim-imobjs-create string scheme-name)))
+                    imobj (car (pyim-imobjs-create string scheme)))
               (if (>= (+ orig-imobj-len num) (length imobj))
                   (setq end-position pos)
                 (cl-decf pos))))
@@ -171,7 +263,7 @@
           (setq pos start)
           (while (and (>= pos (point-min)) (= end-position start))
             (setq string (buffer-substring-no-properties (point-min) pos)
-                  imobj (car (pyim-imobjs-create string scheme-name)))
+                  imobj (car (pyim-imobjs-create string scheme)))
             (if (= (- orig-imobj-len num) (length imobj))
                 (setq end-position pos)
               (cl-decf pos)))))
@@ -202,9 +294,9 @@
 
 (defun pyim-process-input-chinese-p ()
   "确定 pyim 是否需要启动中文输入模式."
-  (let* ((scheme-name (pyim-scheme-name))
-         (first-chars (pyim-scheme-get-option scheme-name :first-chars))
-         (rest-chars (pyim-scheme-get-option scheme-name :rest-chars)))
+  (let* ((scheme (pyim-scheme-current))
+         (first-chars (pyim-scheme-first-chars scheme))
+         (rest-chars (pyim-scheme-rest-chars scheme)))
     (and (or (pyim-process-force-input-chinese-p)
              (and (not pyim-process-input-ascii)
                   (not (pyim-process-auto-switch-english-input-p))))
@@ -220,127 +312,184 @@
       (and (not pyim-process-input-ascii)
            (not (pyim-process-auto-switch-english-input-p)))))
 
-(defun pyim-process-run (&optional no-delay)
-  "延迟 `pyim-exhibit-delay-ms' 显示备选词等待用户选择。"
+(defun pyim-process-run ()
+  "查询 entered 字符串, 显示备选词等待用户选择。"
   (if (= (length (pyim-entered-get 'point-before)) 0)
       (pyim-process-terminate)
-    (when pyim-process-run-exhibit-timer
-      (cancel-timer pyim-process-run-exhibit-timer))
-    (cond
-     ((or no-delay
-          (not pyim-exhibit-delay-ms)
-          (eq pyim-exhibit-delay-ms 0))
-      (pyim-process-run-1))
-     (t (setq pyim-process-run-exhibit-timer
-              (run-with-timer (/ pyim-exhibit-delay-ms 1000.0)
-                              nil
-                              #'pyim-process-run-1))))))
+    (let* ((scheme (pyim-scheme-current))
+           entered-to-translate)
+      (setq entered-to-translate
+            (pyim-entered-get 'point-before))
+      (setq pyim-process-imobjs (pyim-imobjs-create entered-to-translate scheme))
+      (setq pyim-process-candidates
+            (or (delete-dups (pyim-candidates-create pyim-process-imobjs scheme))
+                (list entered-to-translate)))
+      (unless (eq (pyim-process-auto-select) 'auto-select-success)
+        (setq pyim-process-candidate-position 1)
+        (pyim-process-ui-refresh)
+        (pyim-process-run-delay)))))
 
-(defun pyim-process-run-1 ()
-  "查询 `pyim-entered-buffer' 光标前的拼音字符串（如果光标在行首则为光标后的）, 显示备选词等待用户选择。"
-  (let* ((scheme-name (pyim-scheme-name))
-         entered-to-translate)
-    (setq entered-to-translate
-          (pyim-entered-get 'point-before))
-    (setq pyim-imobjs (pyim-imobjs-create entered-to-translate scheme-name))
-    (setq pyim-candidates
-          (or (delete-dups (pyim-candidates-create pyim-imobjs scheme-name))
-              (list entered-to-translate)))
-    (pyim-process-run-async-timer-reset)
-    ;; 当用户选择词条时，如果停顿超过1秒，就激活异步流程，不同的输入法异步流程定
-    ;; 义也可能不同，比如：全拼输入法目前的异步流程是搜索当前 buffer 获取词条。
-    ;; 而 rime 的异步流程是获取所有的词条。
-    (setq pyim-process-run-async-timer
-          (run-with-timer
-           pyim-process-async-delay
-           nil #'pyim-process-run-async))
-    ;; 自动上屏功能
-    (let ((autoselector-results
-           (mapcar (lambda (x)
-                     (when (functionp x)
-                       (ignore-errors
-                         (funcall x))))
-                   (cl-remove-duplicates pyim-autoselector :from-end t)))
-          result)
-      (cond
-       ;; 假如用户输入 "nihao", 然后按了 "m" 键, 那么当前的 entered
-       ;; 就是"nihaom", 如果 autoselector 返回 list: (:select last),
-       ;; 那么，“nihao” 对应的第一个候选词将上屏，m键下一轮继续处理。
-       ;; 这是一种 "踩雷确认模式".
-       ((and
-         ;; autoselector 功能会影响手动连续选择功能，所以这里做了一些限制，
-         ;; 只有在输入的时候才能够触发 autoselector 机制。
-         (pyim-process-self-insert-command-p this-command)
-         (cl-find-if (lambda (x)
-                       (setq result x)
-                       (equal (plist-get x :select) 'last))
-                     autoselector-results))
-        (let* ((str (plist-get result :replace-with))
-               (pyim-candidates
-                (if (and str (stringp str))
-                    (list str)
-                  pyim-candidates-last)))
-          (pyim-process-outcome-handle 'candidate)
-          (pyim-process-create-word (pyim-process-get-outcome) t))
-        ;; autoselector 机制已经触发的时候，如果发现 entered buffer 中
-        ;; point 后面还有未处理的输入，就将其转到下一轮处理，这种情况
-        ;; 很少出现，一般是型码输入法，entered 编辑的时候有可能触发。
-        (pyim-add-unread-command-events
-         (pyim-entered-get 'point-after))
-        (pyim-add-unread-command-events last-command-event)
-        (pyim-process-terminate))
-       ;; 假设用户已经输入 "niha", 然后按了 "o" 键，那么，当前
-       ;; entered 就是 "nihao". 如果 autoselector 函数返回一个 list:
-       ;; (:select current), 那么就直接将 "nihao" 对应的第一个候选词
-       ;; 上屏幕。
-       ((and (pyim-process-self-insert-command-p this-command)
-             (cl-find-if (lambda (x)
-                           (setq result x)
-                           (equal (plist-get x :select) 'current))
-                         autoselector-results))
-        (let* ((str (plist-get result :replace-with))
-               (pyim-candidates
-                (if (and str (stringp str))
-                    (list str)
-                  pyim-candidates)))
-          (pyim-process-outcome-handle 'candidate)
-          (pyim-process-create-word (pyim-process-get-outcome) t))
-        (pyim-add-unread-command-events
-         (pyim-entered-get 'point-after))
-        (pyim-process-terminate))
-       (t (setq pyim-candidate-position 1)
-          (pyim-preview-refresh)
-          (pyim-page-refresh))))))
+(defun pyim-process-auto-select ()
+  "自动上屏操作流程。
+
+1. (:select last) 模式：
+
+假如用户输入 \"nihao\", 然后按了 \"m\" 键, 那么当前的 entered 就
+是 \"nihaom\", 如果 autoselector 返回 list: (:select last), 那么，
+\"nihao\" 对应的第一个候选词将上屏，m 键下一轮继续处理，这是一种
+\"踩雷确认模式\".
+
+2. (:select current) 模式：
+
+假设用户已经输入 \"niha\", 然后按了 \"o\" 键，那么，当前 entered
+就是 \"nihao\". 如果 autoselector 函数返回一个 list:
+(:select current), 那么就直接将 \"nihao\" 对应的第一个候选词上屏
+幕。
+
+3. 如果返回的 list 中包含 :replace-with \"xxx\" 信息，那么
+\"xxx\" 上屏。"
+  (let* ((results (pyim-process-autoselector-results))
+         (select-last-word
+          (pyim-process-autoselector-find-result results 'last))
+         (select-current-word
+          (pyim-process-autoselector-find-result results 'current)))
+    (when (or select-last-word select-current-word)
+      (let* ((str (plist-get (if select-last-word
+                                 select-last-word
+                               select-current-word)
+                             :replace-with))
+             (candidates (if select-last-word
+                             pyim-process-candidates-last
+                           pyim-process-candidates))
+             (pyim-process-candidates
+              (if (and str (stringp str))
+                  (list str)
+                candidates)))
+        (pyim-process-outcome-handle 'candidate)
+        (pyim-process-create-word (pyim-process-get-outcome) t))
+      ;; autoselector 机制已经触发的时候，如果发现 entered buffer 中
+      ;; point 后面还有未处理的输入，就将其转到下一轮处理，这种情况
+      ;; 很少出现，一般是型码输入法，entered 编辑的时候有可能触发。
+      (pyim-add-unread-command-events
+       (pyim-entered-get 'point-after))
+      (when select-last-word
+        (pyim-add-unread-command-events last-command-event))
+      (pyim-process-terminate)
+      ;; 如果自动上屏操作成功完成，就返回 'auto-select-success,
+      ;; pyim 后续操作会检测这个返回值。
+      'auto-select-success)))
+
+(defun pyim-process-autoselector-results ()
+  "运行所有 autoselectors, 返回结果列表。"
+  ;; autoselector 功能会影响手动连续选择功能，所以这里做了一些限制，
+  ;; 只有在输入的时候才能够触发 autoselector 机制。
+  (when (pyim-process-self-insert-command-p this-command)
+    (mapcar (lambda (x)
+              (when (functionp x)
+                (ignore-errors
+                  (funcall x))))
+            (cl-remove-duplicates pyim-process-autoselector :from-end t))))
 
 (defun pyim-process-self-insert-command-p (cmd)
   "测试 CMD 是否是一个 pyim self insert command."
   (member cmd pyim-process-self-insert-commands))
 
-(defun pyim-process-run-async ()
-  "Function used by `pyim-process-run-async-timer'"
-  (let* ((scheme-name (pyim-scheme-name))
-         (words (delete-dups (pyim-candidates-create pyim-imobjs scheme-name t))))
-    (when words
-      (setq pyim-candidates words)
-      (pyim-preview-refresh)
-      (pyim-page-refresh))))
+(defun pyim-process-autoselector-find-result (results type)
+  "从所有 autoselector 运行结果中，寻找返回类型为 TYPE 的结果。"
+  (cl-find-if (lambda (x)
+                (equal (plist-get x :select) type))
+              results))
 
-(defun pyim-process-run-async-timer-reset ()
-  "Reset `pyim-process-run-async-timer'."
-  (when pyim-process-run-async-timer
-    (cancel-timer pyim-process-run-async-timer)
-    (setq pyim-process-run-async-timer nil)))
+(defun pyim-process-ui-refresh (&optional hightlight-current)
+  "刷新 pyim 相关 UI."
+  (run-hook-with-args 'pyim-process-ui-refresh-hook hightlight-current))
+
+(defun pyim-process-run-delay ()
+  "运行延迟获取候选词流程。
+
+当用户输入停顿时间超过 `pyim-process-run-delay' 这个阈值时，就激
+活延迟获取候选词流程，目前，延迟获取候选词有两种处理模式：
+
+1. 同步+限时+用户抢断模式：比如：搜索 buffer 词条等。
+2. 异步模式：比如：调用云输入法接口等。
+
+注意：按理说，两种模式的延时阈值应该单独设置的，但当前 pyim 没有
+将其分开，因为这样做在满足当前需求的同时，可以简化代码，如果以后
+有新功能必须将其分开时，再做考虑。"
+  (pyim-process-run-delay-timer-reset)
+  (setq pyim-process-run-delay-timer
+        (run-with-timer
+         pyim-process-run-delay
+         nil #'pyim-process-run-delay-timer-function)))
+
+(defun pyim-process-run-delay-timer-reset ()
+  "Reset `pyim-process-run-delay-timer'."
+  (when pyim-process-run-delay-timer
+    (cancel-timer pyim-process-run-delay-timer)
+    (setq pyim-process-run-delay-timer nil)))
+
+(defun pyim-process-run-delay-timer-function ()
+  "Function used by `pyim-process-run-delay-timer'"
+  (pyim-process-handle-candidates-async)
+  (pyim-process-handle-candidates-limit-time))
+
+(defun pyim-process-handle-candidates-limit-time ()
+  "使用限时的方式获取候选词。"
+  (let* ((scheme (pyim-scheme-current))
+         (words (pyim-candidates-create-limit-time
+                 pyim-process-imobjs scheme)))
+    (when words
+      (setq pyim-process-candidates
+            (pyim-process-merge-candidates words pyim-process-candidates))
+      (pyim-process-ui-refresh))))
+
+(defun pyim-process-merge-candidates (new-candidates old-candidates)
+  "将 OLD-CANDIDATES 和 NEW-CANDIDATES 合并的默认策略。"
+  (remove nil (delete-dups
+               `(,(car old-candidates)
+                 ,@new-candidates
+                 ,@(cdr old-candidates)))))
+
+(defun pyim-process-handle-candidates-async ()
+  "使用异步的方式获取候选词条词条。"
+  (let ((scheme (pyim-scheme-current))
+        (buffer (current-buffer)))
+    (pyim-candidates-create-async
+     pyim-process-imobjs scheme
+     (lambda (async-return)
+       (with-current-buffer buffer
+         (when (and pyim-process-translating
+                    (not (input-pending-p))
+                    (equal (car async-return) pyim-process-imobjs))
+           (setq pyim-process-candidates
+                 (pyim-process-merge-candidates (cdr async-return) pyim-process-candidates))
+           (pyim-process-ui-refresh)))))))
 
 (defun pyim-process-get-candidates ()
-  pyim-candidates)
+  pyim-process-candidates)
+
+(defun pyim-process-get-last-candidates ()
+  pyim-process-candidates-last)
+
+(defun pyim-process-update-last-candidates ()
+  (setq pyim-process-candidates-last pyim-process-candidates))
+
+(defun pyim-process-get-candidate-position ()
+  pyim-process-candidate-position)
+
+(defun pyim-process-candidates-length ()
+  (length pyim-process-candidates))
 
 (defun pyim-process-set-candidate-position (n)
-  (setq pyim-candidate-position n))
+  (setq pyim-process-candidate-position n))
 
-(defun pyim-process-get-imobjs ()
-  pyim-imobjs)
+(defun pyim-process-get-first-imobj ()
+  (car pyim-process-imobjs))
 
 (defun pyim-process-select-subword-p ()
+  pyim-outcome-subword-info)
+
+(defun pyim-process-get-outcome-subword-info ()
   pyim-outcome-subword-info)
 
 (defun pyim-process-toggle-set-subword-info (n)
@@ -359,6 +508,11 @@
       (setq str (pyim-outcome-magic-convert str)))
     str))
 
+(defun pyim-process-subword-and-magic-convert (string)
+  "返回 STRING 以词定字和魔术转换后的新字符串."
+  (pyim-outcome-magic-convert
+   (pyim-outcome-get-subword string)))
+
 (defun pyim-process-outcome-handle (type)
   "依照 TYPE, 获取 pyim 的 outcome，并将其加入 `pyim-outcome-history'."
   (cond ((not enable-multibyte-characters)
@@ -374,15 +528,15 @@
           pyim-outcome-history))
         ((eq type 'candidate)
          (let ((candidate
-                (nth (1- pyim-candidate-position)
-                     pyim-candidates)))
+                (nth (1- pyim-process-candidate-position)
+                     pyim-process-candidates)))
            (push
             (concat (pyim-outcome-get) candidate)
             pyim-outcome-history)))
         ((eq type 'candidate-and-last-char)
          (let ((candidate
-                (nth (1- pyim-candidate-position)
-                     pyim-candidates)))
+                (nth (1- pyim-process-candidate-position)
+                     pyim-process-candidates)))
            (push
             (concat (pyim-outcome-get)
                     candidate
@@ -529,14 +683,14 @@ alist 列表。"
           (not (pyim-process-auto-switch-english-input-p))))))
 
 (defun pyim-process-create-code-criteria ()
-  "创建 `pyim-cstring-to-code-criteria'."
-  (setq pyim-cstring-to-code-criteria
+  "创建 `pyim-process-code-criteria'."
+  (setq pyim-process-code-criteria
         (let ((str (string-join
-                    (pyim-codes-create (car (pyim-process-get-imobjs))
-                                       (pyim-scheme-name)))))
-          (if (> (length pyim-cstring-to-code-criteria)
+                    (pyim-codes-create (pyim-process-get-first-imobj)
+                                       (pyim-scheme-current)))))
+          (if (> (length pyim-process-code-criteria)
                  (length str))
-              pyim-cstring-to-code-criteria
+              pyim-process-code-criteria
             str))))
 
 (defun pyim-process-create-word (word &optional prepend wordcount-handler criteria)
@@ -570,12 +724,11 @@ BUG：拼音无法有效地处理多音字。"
     ;; 记录最近创建的词条，用于快速删词功能。
     (setq pyim-process-last-created-words
           (cons word (remove word pyim-process-last-created-words)))
-    (let* ((scheme-name (pyim-scheme-name))
-           (code-prefix (pyim-scheme-get-option scheme-name :code-prefix))
+    (let* ((scheme (pyim-scheme-current))
+           (code-prefix (pyim-scheme-code-prefix scheme))
            (codes (pyim-cstring-to-codes
-                   word scheme-name
-                   (or criteria pyim-cstring-to-code-criteria))))
-      (pyim-candidates-add-possible-chief word)
+                   word scheme
+                   (or criteria pyim-process-code-criteria))))
       ;; 保存对应词条的词频
       (when (> (length word) 0)
         (pyim-dcache-update-wordcount word (or wordcount-handler #'1+)))
@@ -606,19 +759,24 @@ BUG：拼音无法有效地处理多音字。"
 
 (defun pyim-process-terminate ()
   "Terminate the translation of the current key."
+  (pyim-process-terminate-really (pyim-scheme-current)))
+
+(cl-defgeneric pyim-process-terminate-really (scheme)
+  "Terminate the translation of the current key.")
+
+(cl-defmethod pyim-process-terminate-really (_scheme)
   (setq pyim-process-translating nil)
   (pyim-entered-erase-buffer)
+  (setq pyim-process-code-criteria nil)
   (setq pyim-process-force-input-chinese nil)
-  (setq pyim-candidates nil)
-  (setq pyim-candidates-last nil)
-  (pyim-preview-delete-string)
-  (pyim-page-hide)
-  (setq pyim-cstring-to-code-criteria nil)
-  (pyim-process-run-async-timer-reset)
-  (let* ((class (pyim-scheme-get-option (pyim-scheme-name) :class))
-         (func (intern (format "pyim-process-terminate:%S" class))))
-    (when (and class (functionp func))
-      (funcall func))))
+  (setq pyim-process-candidates nil)
+  (setq pyim-process-candidates-last nil)
+  (pyim-process-run-delay-timer-reset)
+  (pyim-process-ui-hide))
+
+(defun pyim-process-ui-hide ()
+  "隐藏 pyim 相关 UI."
+  (run-hooks 'pyim-process-ui-hide-hook))
 
 ;; * Footer
 (provide 'pyim-process)

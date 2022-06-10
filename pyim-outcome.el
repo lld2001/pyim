@@ -29,17 +29,18 @@
 ;; * 代码                                                           :code:
 (require 'cl-lib)
 (require 'pyim-common)
+(require 'pyim-scheme)
 
 (defgroup pyim-outcome nil
   "Outcome tools for pyim."
   :group 'pyim)
 
+(defvaralias 'pyim-magic-converter 'pyim-outcome-magic-converter)
+
 (defcustom pyim-outcome-magic-converter nil
   "将 “待选词条” 在 “上屏” 之前自动转换为其他字符串.
 这个功能可以实现“简转繁”，“输入中文得到英文”之类的功能。"
   :type 'function)
-
-(defvaralias 'pyim-magic-converter 'pyim-outcome-magic-converter)
 
 (defcustom pyim-outcome-trigger "v"
   "用于触发特殊操作的字符，相当与单字快捷键.
@@ -164,16 +165,9 @@ pyim 的 translate-trigger-char 要占用一个键位，为了防止用户
               (char-to-string user-trigger)
             (when (= (length user-trigger) 1)
               user-trigger)))
-         (first-char (pyim-scheme-get-option
-                      (pyim-scheme-name)
-                      :first-chars))
-         (prefer-triggers (or (pyim-scheme-get-option
-                               (pyim-scheme-name)
-                               :prefer-triggers)
-                              ;; 向后兼容
-                              (list (pyim-scheme-get-option
-                                     (pyim-scheme-name)
-                                     :prefer-trigger-chars)))))
+         (first-char (pyim-scheme-first-chars (pyim-scheme-current)))
+         (prefer-triggers (pyim-scheme-prefer-triggers
+                           (pyim-scheme-current))))
     (if (pyim-string-match-p (regexp-quote user-trigger) first-char)
         (progn
           ;; (message "注意：pyim-outcome-trigger 设置和当前输入法冲突，使用推荐设置：\"%s\""

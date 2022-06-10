@@ -29,7 +29,8 @@
 ;; * 代码                                                           :code:
 (require 'cl-lib)
 (require 'pyim-common)
-(require 'pyim-outcome)
+(require 'pyim-process)
+(require 'mule)
 
 (defgroup pyim-preview nil
   "Preview libs for pyim."
@@ -40,6 +41,8 @@
 
 (defvar pyim-preview-overlay nil
   "用于保存光标处预览字符串的 overlay.")
+
+(defvar input-method-highlight-flag) ;; fixed compiling error
 
 (pyim-register-local-variables '(pyim-preview-overlay))
 
@@ -57,36 +60,25 @@
       (if input-method-highlight-flag
           (overlay-put pyim-preview-overlay 'face 'pyim-preview-face)))))
 
+(add-hook 'pyim-process-ui-init-hook #'pyim-preview-setup-overlay)
+
 (defun pyim-preview-delete-overlay ()
   "删除 pyim 光标处实时预览功能所需要的 overlay.
 
 这个函数会在 `pyim-input-method' 中调用，用于删除
 `pyim-preview-overlay' 中保存的 overlay。"
-  (if (and (overlayp pyim-preview-overlay) (overlay-start pyim-preview-overlay))
+  (if (and (overlayp pyim-preview-overlay)
+           (overlay-start pyim-preview-overlay))
       (delete-overlay pyim-preview-overlay)))
 
-(defun pyim-preview-refresh ()
+(defun pyim-preview-refresh (&rest _)
   "刷新光标处预览.
 
 pyim 会使用 Emacs overlay 机制在 *待输入buffer* 光标处高亮显示一
 个预览字符串，让用户可以查看将要输入的字符串，这个函数用于更新这
 个字符串的内容。"
-  (let* ((class (pyim-scheme-get-option (pyim-scheme-name) :class))
-         (candidates pyim-candidates)
-         (pos (1- (min pyim-candidate-position (length candidates))))
-         (preview (concat (pyim-outcome-get)
-                          (nth pos candidates))))
-    (when (memq class '(quanpin))
-      (let ((rest (mapconcat
-                   (lambda (py)
-                     (concat (nth 0 py) (nth 1 py)))
-                   (nthcdr (length preview) (car pyim-imobjs))
-                   "'")))
-        (when (string< "" rest)
-          (setq preview (concat preview rest)))))
-    (setq preview
-          (pyim-outcome-magic-convert
-           (pyim-outcome-get-subword preview)))
+  (let* ((scheme (pyim-scheme-current))
+         (preview (pyim-preview-string scheme)))
     ;; Delete old preview string.
     (pyim-preview-delete-string)
     ;; Insert new preview string.
@@ -95,15 +87,50 @@ pyim 会使用 Emacs overlay 机制在 *待输入buffer* 光标处高亮显示�
     (move-overlay pyim-preview-overlay
                   (overlay-start pyim-preview-overlay) (point))))
 
+(add-hook 'pyim-process-ui-refresh-hook #'pyim-preview-refresh)
+
+(cl-defgeneric pyim-preview-string (scheme)
+  "获得 preview 字符串。")
+
+(cl-defmethod pyim-preview-string (_scheme)
+  "获得 preview 字符串。"
+  (let* ((candidates (pyim-process-get-candidates))
+         (pos (1- (min (pyim-process-get-candidate-position)
+                       (length candidates))))
+         (preview (concat (pyim-process-get-outcome)
+                          (nth pos candidates))))
+    (pyim-process-subword-and-magic-convert preview)))
+
+(cl-defmethod pyim-preview-string ((_scheme pyim-scheme-quanpin))
+  "获得 preview 字符串，适用于全拼输入法。"
+  (let* ((candidates (pyim-process-get-candidates))
+         (pos (1- (min (pyim-process-get-candidate-position)
+                       (length candidates))))
+         (preview (concat (pyim-process-get-outcome)
+                          (nth pos candidates)))
+         (rest (mapconcat
+                (lambda (py)
+                  (concat (nth 0 py) (nth 1 py)))
+                (nthcdr (length preview)
+                        (pyim-process-get-first-imobj))
+                "'")))
+    (when (string< "" rest)
+      (setq preview (concat preview rest)))
+    (pyim-process-subword-and-magic-convert preview)))
+
 (defun pyim-preview-delete-string ()
   "删除已经插入 buffer 的 preview 预览字符串。"
-  (when (overlay-start pyim-preview-overlay)
+  (when (and pyim-preview-overlay (overlay-start pyim-preview-overlay))
     (delete-region (overlay-start pyim-preview-overlay)
                    (overlay-end pyim-preview-overlay))))
+
+(add-hook 'pyim-process-ui-hide-hook #'pyim-preview-delete-string)
 
 (defun pyim-preview-start-point ()
   "Preview 字符串的开始位置。"
   (overlay-start pyim-preview-overlay))
+
+(setq pyim-process-ui-position-function #'pyim-preview-start-point)
 
 ;; * Footer
 (provide 'pyim-preview)

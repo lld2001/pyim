@@ -54,6 +54,7 @@
 ;;; Code:
 ;; * 代码                                                                 :code:
 (require 'pyim-common)
+(require 'pyim-process)
 
 ;; ** 根据环境自动切换到英文输入模式
 (defun pyim-probe-program-mode ()
@@ -73,12 +74,14 @@
 (defvar org-heading-regexp)
 (defvar org-use-speed-commands)
 (defvar pyim-isearch-mode)
+(defvar isearch-mode)
 
 (defun pyim-probe-org-speed-commands ()
   "激活这个 pyim 探针函数后，可以解决 org-speed-commands 与 pyim 冲突问题。
 
 用于：`pyim-english-input-switch-functions' 。"
-  (and (string= major-mode "org-mode")
+  (and (> emacs-major-version 25)
+       (string= major-mode "org-mode")
        (bolp)
        (looking-at org-heading-regexp)
        org-use-speed-commands))
@@ -112,7 +115,7 @@
 3. 使用 `pyim-convert-code-at-point' 可以将光标前的 code 字符串转换为中文，
    所以用户需要给 `pyim-convert-code-at-point' 绑定一个快捷键，比如：
 
-   (global-set-key (kbd \"M-i\") 'pyim-convert-code-at-point)
+   (global-set-key (kbd \"M-i\") #'pyim-convert-code-at-point)
 
 这个函数用于：`pyim-english-input-switch-functions' 。"
   (let* ((offset 0)
@@ -129,9 +132,9 @@
                     ;; 查找前一个非空格字符。
                     (if (re-search-backward "[^[:space:]\n]" nil t)
                         (char-to-string (char-after (point))))))
-                 (> (length (pyim-entered-get 'point-before)) 0)))
+                 (> (length (pyim-process-get-entered 'point-before)) 0)))
       (not (or (pyim-string-match-p "\\cc" non-digit-str-before-1)
-               (> (length (pyim-entered-get 'point-before)) 0))))))
+               (> (length (pyim-process-get-entered 'point-before)) 0))))))
 
 (defun pyim-probe-auto-english ()
   "激活这个 pyim 探针函数后，使用下面的规则自动切换中英文输入：
@@ -149,7 +152,7 @@
         (or (if (pyim-string-match-p " " str-before-1)
                 (pyim-string-match-p "\\cc" str-before-2)
               (and (not (pyim-string-match-p "\\cc" str-before-1))
-                   (= (length (pyim-entered-get 'point-before)) 0)))))))
+                   (= (length (pyim-process-get-entered 'point-before)) 0)))))))
 
 (declare-function evil-normal-state-p "evil")
 (defun pyim-probe-evil-normal-mode ()
@@ -169,7 +172,6 @@
                  (mapcar #'car pyim-punctuation-dict))
          (string-match "^[ \t]*$" line-string))))
 
-(declare-function pyim-entered-get "pyim-entered" (&optional type))
 (declare-function org-inside-LaTeX-fragment-p "org")
 (declare-function org-inside-latex-macro-p "org")
 
@@ -183,10 +185,13 @@
          (member (char-to-string char) puncts))))
 
 (defun pyim-probe-org-latex-mode ()
-  "org-mode 中的 latex fragment 和 latex 宏指令中自动切换到英文输入."
-  (when (eq major-mode 'org-mode)
-    (or (not (eq (org-inside-LaTeX-fragment-p) nil))
-        (not (eq (org-inside-latex-macro-p) nil)))))
+  "org-mode 中的 latex fragment 和 latex 宏指令中自动切换到英文输入.
+
+FIXME: 这个 probe 在 Emacs 25 上运行可能存在问题。"
+  (when (and (> emacs-major-version 25)
+             (eq major-mode 'org-mode))
+    (or (org-inside-LaTeX-fragment-p)
+        (org-inside-latex-macro-p))))
 
 (defun pyim-probe-exwm-xim-environment ()
   "测试当前是否是 exwm-xim 输入法环境。
@@ -203,6 +208,8 @@
           'xwidget-webkit-pass-command-event-with-input-method)
       (bound-and-true-p xwidget-webkit-isearch--read-string-buffer)))
 
+(cl-pushnew #'pyim-probe-exwm-xim-environment pyim-force-input-chinese-functions)
+(cl-pushnew #'pyim-probe-xwidget-webkit-environment pyim-force-input-chinese-functions)
 
 ;; * Footer
 (provide 'pyim-probe)

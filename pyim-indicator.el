@@ -29,7 +29,7 @@
 ;; * 代码                                                           :code:
 (require 'cl-lib)
 (require 'pyim-common)
-(require 'posframe nil t)
+(require 'pyim-process)
 
 (defgroup pyim-indicator nil
   "Indicator for pyim."
@@ -76,12 +76,13 @@ timer 实现。"
 (defvar pyim-indicator-last-input-method-title nil
   "记录上一次 `current-input-method-title' 的取值。")
 
-(defun pyim-indicator-start-daemon (func)
+(defun pyim-indicator-start-daemon ()
   "Indicator daemon, 用于实时显示输入法当前输入状态。"
   (unless pyim-indicator-original-cursor-color
     (setq pyim-indicator-original-cursor-color
           (frame-parameter nil 'cursor-color)))
-  (setq pyim-indicator-daemon-function-argument func)
+  (setq pyim-indicator-daemon-function-argument
+        #'pyim-process-indicator-function)
   (if pyim-indicator-use-post-command-hook
       (add-hook 'post-command-hook #'pyim-indicator-daemon-function)
     (unless (timerp pyim-indicator-timer)
@@ -90,15 +91,25 @@ timer 实现。"
              nil pyim-indicator-timer-repeat
              #'pyim-indicator-daemon-function)))))
 
+(add-hook 'pyim-process-start-daemon-hook #'pyim-indicator-start-daemon)
+
 (defun pyim-indicator-stop-daemon ()
   "Stop indicator daemon."
   (interactive)
-  (setq pyim-indicator-daemon-function-argument nil)
-  (remove-hook 'post-command-hook #'pyim-indicator-daemon-function)
-  (when (timerp pyim-indicator-timer)
-    (cancel-timer pyim-indicator-timer)
-    (setq pyim-indicator-timer nil))
-  (pyim-indicator-revert-cursor-color))
+  ;; 只有其它的 buffer 中没有启动 pyim 时，才停止 daemon.
+  ;; 因为 daemon 是服务所有 buffer 的。
+  (unless (cl-find-if
+           (lambda (buf)
+             (buffer-local-value 'current-input-method buf))
+           (remove (current-buffer) (buffer-list)))
+    (setq pyim-indicator-daemon-function-argument nil)
+    (remove-hook 'post-command-hook #'pyim-indicator-daemon-function)
+    (when (timerp pyim-indicator-timer)
+      (cancel-timer pyim-indicator-timer)
+      (setq pyim-indicator-timer nil))
+    (pyim-indicator-revert-cursor-color)))
+
+(add-hook 'pyim-process-stop-daemon-hook #'pyim-indicator-stop-daemon)
 
 (defun pyim-indicator-daemon-function ()
   "`pyim-indicator-daemon' 内部使用的函数。"
@@ -161,20 +172,6 @@ timer 实现。"
         (setq current-input-method-title (nth 0 pyim-indicator-modeline-string))
       (setq current-input-method-title (nth 1 pyim-indicator-modeline-string))))
   (pyim-indicator-update-mode-line))
-
-(defun pyim-indicator-with-posframe (input-method chinese-input-p)
-  "Pyim 自带的 indicator, 通过 posframe 来显示输入状态。"
-  (when (posframe-workable-p)
-    (let ((buffer " *pyim-indicator*"))
-      (if (not (equal input-method "pyim"))
-          (posframe-delete buffer)
-        (if chinese-input-p
-            (posframe-show buffer
-                           :string ".."
-                           :font "Monospace-2"
-                           :poshandler #'posframe-poshandler-point-top-left-corner
-                           :background-color (pyim-indicator-select-color (list "red" "green" "blue" "orange")))
-          (posframe-hide buffer))))))
 
 ;; * Footer
 (provide 'pyim-indicator)

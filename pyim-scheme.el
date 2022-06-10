@@ -53,10 +53,59 @@
 (defvar pyim-schemes nil
   "Pyim 支持的所有拼音方案.")
 
+(cl-defstruct (pyim-scheme
+               (:constructor pyim-scheme-create)
+               (:copier nil))
+  "输入法通用方案类型."
+  (name         nil :type symbol  :documentation "输入法名称。")
+  (document     nil :type string  :documentation "输入法简要说明。")
+  (first-chars  nil :type string  :documentation "输入法启动后，可以处理的第一个字符。")
+  (rest-chars   nil :type string  :documentation "输入法处理一个字符后，可以继续处理的字符。")
+  (code-prefix  nil :type string  :documentation "pyim 词库用到的编码前缀，比如：wubi/ 等。")
+  (prefer-triggers   nil :type list    :documentation "单字符快捷键设置，有些输入法不使用某个字母，这个字母就可以做为快捷键使用。")
+  (cregexp-support-p nil :type boolean :documentation "输入法是否支持从代码生成搜索中文的正则表达式。"))
+
+(cl-defstruct (pyim-scheme-quanpin
+               (:include pyim-scheme)
+               (:constructor pyim-scheme-quanpin-create)
+               (:copier nil))
+  "全拼输入法方案类型。")
+
+(cl-defstruct (pyim-scheme-shuangpin
+               (:include pyim-scheme-quanpin)
+               (:constructor pyim-scheme-shuangpin-create)
+               (:copier nil))
+  "双拼输入法方案类型。
+
+在 PYIM 中，双拼输入法是建立在全拼输入法的基础上的，所以将其定义
+为全拼输入法类型的子类型。"
+  (keymaps nil :type list :documentation "双拼到全拼的声母韵母映射表。"))
+
+(cl-defstruct (pyim-scheme-xingma
+               (:include pyim-scheme)
+               (:constructor pyim-scheme-xingma-create)
+               (:copier nil))
+  "形码输入法方案类型。
+
+这个输入法方案类型代表那些重码少，编码长度固定的一类输入法，比如：
+五笔输入法，仓颉输入法等。"
+  (code-prefix-history nil :type list   :documentation "输入法以前使用过的代码前缀，用于编写词库升级程序。")
+  (code-split-length   nil :type number :documentation "代码分割长度。")
+  (code-maximum-length nil :type number :documentation "代码最大长度。"))
+
+(cl-defstruct (pyim-scheme-wubi
+               (:include pyim-scheme-xingma)
+               (:constructor pyim-scheme-wubi-create)
+               (:copier nil))
+  "五笔输入法方案类型。
+
+单独创建五笔方案类型，是为了支持五笔反查功能，因为1到4字的中文词
+语, 五笔编码有固定的规则，其它形码没有类似特点。" )
+
 ;;;###autoload
 (defun pyim-default-scheme (&optional scheme-name)
   (interactive)
-  (let* ((scheme-names (mapcar #'car pyim-schemes))
+  (let* ((scheme-names (mapcar #'pyim-scheme-name pyim-schemes))
          (scheme-name
           (or scheme-name
               (intern (completing-read "PYIM: 将 pyim-default-scheme 设置为：" scheme-names)))))
@@ -68,66 +117,74 @@
       (message "PYIM: %s 不是一个有效的 scheme 名称, 继续使用 %s." scheme-name pyim-default-scheme)
       nil)))
 
-(defun pyim-scheme-add (scheme)
-  "Add SCHEME to `pyim-schemes'"
-  (if (listp scheme)
-      (let ((scheme-name (car scheme)))
-        (when (symbolp scheme-name)
-          (setq pyim-schemes
-                (remove (assoc scheme-name pyim-schemes)
-                        pyim-schemes)))
-        (push scheme pyim-schemes))
+(defun pyim-scheme-add (scheme-config)
+  "Add SCHEME to `pyim-schemes'."
+  (if (listp scheme-config)
+      (let* ((scheme-name (car scheme-config))
+             (scheme-type (plist-get (cdr scheme-config) :class))
+             ;; `pyim-scheme-add' 在 pyim 使用 `cl-defstruct' 重构之前就已经存在
+             ;; 很长时间，使用下面的方式向后兼容。
+             (func (intern (format "pyim-scheme-%s-create" scheme-type)))
+             ;; 函数 pyim-scheme-*-create 不识别 :class 参数，所以后续需要从
+             ;; scheme-config 中删除 :class xxx.
+             (args (remove :class (plist-put (cdr scheme-config) :class :class)))
+             (scheme (apply func :name scheme-name args))
+             schemes update-p)
+        (when (and (symbolp scheme-name)
+                   (functionp func))
+          (dolist (x pyim-schemes)
+            (push (if (equal (pyim-scheme-name x) scheme-name)
+                      (progn (setq update-p t)
+                             scheme)
+                    x)
+                  schemes))
+          (unless update-p
+            (push scheme schemes))
+          (setq pyim-schemes (reverse schemes))))
     (message "PYIM: Invalid pyim scheme config!")))
 
+(defun pyim-scheme-current ()
+  "获取当前正在使用的 scheme。"
+  (or (pyim-scheme-get
+       (if pyim-assistant-scheme-enable
+           pyim-assistant-scheme
+         pyim-default-scheme))
+      (pyim-scheme-get 'quanpin)))
+
 (defun pyim-scheme-get (scheme-name)
-  "获取名称为 SCHEME-NAME 的输入法方案。"
+  "获取名称为 SCHEME-NAME 的 scheme."
   (when scheme-name
-    (assoc scheme-name pyim-schemes)))
+    (cl-find-if
+     (lambda (x)
+       (equal (pyim-scheme-name x) scheme-name))
+     pyim-schemes)))
 
-(defun pyim-scheme-name (&optional default)
-  "获取输入法 scheme"
-  (let (scheme-name)
-    (if (and pyim-assistant-scheme-enable
-             (not default))
-        (setq scheme-name
-              (or pyim-assistant-scheme
-                  pyim-default-scheme))
-      (setq scheme-name pyim-default-scheme))
-    (if (assq scheme-name pyim-schemes)
-        scheme-name
-      'quanpin)))
-
-(defun pyim-scheme-get-option (scheme-name option)
-  "获取名称为 SCHEME-NAME 的输入法方案，并提取其属性 OPTION 。"
-  (when scheme-name
-    (let* ((scheme (pyim-scheme-get scheme-name))
-           (scheme-inherit
-            (car (pyim-scheme-get
-                  (plist-get (cdr scheme) :inherit)))))
-      (if (member option (cdr scheme))
-          (plist-get (cdr scheme) option)
-        (pyim-scheme-get-option scheme-inherit option)))))
-
+;; 注意：这个 quanpin scheme 在 pyim 中有特殊的作用，许多功能都依赖 quanpin
+;; scheme 的存在，所以这个 scheme 不可以删除，也不可以更改名字。
 (pyim-scheme-add
  '(quanpin
    :document "全拼输入法方案（不可删除）。"
    :class quanpin
    :first-chars "abcdefghijklmnopqrstuwxyz"
    :rest-chars "vmpfwckzyjqdltxuognbhsrei'-a"
-   :prefer-triggers ("v")))
+   :prefer-triggers ("v")
+   :cregexp-support-p t))
 
+;; 注意：许多测试依赖这个 scheme, 所以更改名称或者删除会导致这些测试失败。
 (pyim-scheme-add
  '(wubi
    :document "五笔输入法。"
-   :class xingma
+   :class wubi
    :first-chars "abcdefghijklmnopqrstuvwxyz"
    :rest-chars "abcdefghijklmnopqrstuvwxyz'"
    :code-prefix "wubi/" ;五笔词库中所有的 code 都以 "wubi/" 开头，防止和其它词库冲突。
    :code-prefix-history (".") ;五笔词库以前使用 "." 做为 code-prefix.
    :code-split-length 4 ;默认将用户输入切成 4 个字符长的 code 列表（不计算 code-prefix）
    :code-maximum-length 4 ;五笔词库中，code 的最大长度（不计算 code-prefix）
-   :prefer-triggers nil))
+   :prefer-triggers nil
+   :cregexp-support-p t))
 
+;; 注意：一些测试依赖这个 scheme, 所以更改名称或者删除会导致这些测试失败。
 (pyim-scheme-add
  '(cangjie
    :document "倉頡输入法。"
@@ -138,7 +195,8 @@
    :code-prefix-history ("@") ;仓颉输入法词库曾经使用过的 code-prefix
    :code-split-length 5 ;默认将用户输入切成 5 个字符长的 code 列表（不计算 code-prefix）
    :code-maximum-length 5 ;仓颉词库中，code 的最大长度（不计算 code-prefix）
-   :prefer-triggers nil))
+   :prefer-triggers nil
+   :cregexp-support-p t))
 
 (pyim-scheme-add
  '(pyim-shuangpin
@@ -147,6 +205,7 @@
    :first-chars "abcdefghijklmnpqrstuvwxyz"
    :rest-chars "abcdefghijklmnopqrstuvwxyz"
    :prefer-triggers ("o")
+   :cregexp-support-p t
    :keymaps
    (("a" "a" "a")
     ("b" "b" "in")
@@ -195,6 +254,7 @@
    :first-chars "abcdefghijklmnopqrstuvwxyz"
    :rest-chars "abcdefghijklmnopqrstuvwxyz;"
    :prefer-triggers nil
+   :cregexp-support-p t
    :keymaps
    (("a" "a" "a")
     ("b" "b" "ou")
@@ -243,6 +303,7 @@
    :first-chars "abcdefghjklmnopqrstvwxyz"
    :rest-chars "abcdefghijklmnopqrstuvwxyz"
    :prefer-triggers nil
+   :cregexp-support-p t
    :keymaps
    (("q" "q" "ei")
     ("w" "w" "ian")
@@ -290,6 +351,7 @@
    :first-chars "abcdefghijklmnopqrstuvwxyz"
    :rest-chars "abcdefghijklmnopqrstuvwxyz"
    :prefer-triggers nil
+   :cregexp-support-p t
    :keymaps
    (("a" "a" "a")
     ("b" "b" "in")
