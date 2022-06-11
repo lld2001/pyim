@@ -106,16 +106,12 @@
 
 ;; ** 从 dhashcache 搜索词条相关函数
 (cl-defmethod pyim-dcache-get
-  (code &context ((pyim-dcache-backend) (eql pyim-dhashcache))
-        &optional from)
-  "从 FROM 对应的 dcaches 中搜索 CODE, 得到对应的词条.
+  (key &context ((pyim-dcache-backend) (eql pyim-dhashcache))
+       &optional from)
+  "从 FROM 中搜索 key, 得到对应的结果。
 
-当词库文件加载完成后，pyim 就可以用这个函数从词库缓存中搜索某个
-code 对应的中文词条了。
-
-如果 FROM 为 nil, 则默认搜索 `pyim-dhashcache-icode2word' 和
-`pyim-dhashcache-code2word' 两个 dcache."
-  (when code
+用于 pyim-dhashcache 类型的 dcache 后端。"
+  (when key
     (let* ((caches (mapcar (lambda (x)
                              (intern (concat "pyim-dhashcache-" (symbol-name x))))
                            (or (and from
@@ -126,18 +122,13 @@ code 对应的中文词条了。
            result)
       (dolist (cache caches)
         (let* ((cache (ignore-errors (symbol-value cache)))
-               (value (and cache (gethash code cache))))
+               (value (and cache (gethash key cache))))
           ;; 处理 iword2count.
           (unless (listp value)
             (setq value (list value)))
           (when value
             (setq result (append result value)))))
       result)))
-
-;; ** 从 dhashcache 搜索代码相关函数
-(cl-defmethod pyim-dcache-search-word-code
-  (string &context ((pyim-dcache-backend) (eql pyim-dhashcache)))
-  (gethash string pyim-dhashcache-word2code))
 
 ;; ** 给 dhashcache 添加词条相关函数
 (cl-defmethod pyim-dcache-insert-word
@@ -651,37 +642,44 @@ pyim 使用的词库文件是简单的文本文件，编码 *强制* 为 \\='utf
 
 当前已有的功能：
 1. 基于 :code-prefix-history 信息，升级为新的 code-prefix。"
-  (pyim-dhashcache-upgrade-icode2word))
+  (pyim-dhashcache-upgrade-icode2word
+   (yes-or-no-p "Delete old key after upgrade? ")))
 
-(defun pyim-dhashcache-upgrade-icode2word ()
+(defun pyim-dhashcache-upgrade-icode2word (&optional delete-old-key)
   "升级 icode2word 缓存。"
-  (let ((delete-old-key-p (yes-or-no-p "Delete old key after upgrade? "))
-        (ruler-list (delete-dups
-                     (remove nil
-                             (mapcar
-                              (lambda (scheme)
-                                (let ((code-prefix (plist-get (cdr scheme) :code-prefix))
-                                      (code-prefix-history (plist-get (cdr scheme) :code-prefix-history)))
-                                  (when code-prefix-history
-                                    (cons code-prefix-history code-prefix))))
-                              pyim-schemes)))))
-    (dolist (ruler ruler-list)
-      (let ((old-prefix-list (car ruler))
-            (new-prefix (cdr ruler)))
-        (dolist (old-prefix old-prefix-list)
-          (maphash
-           (lambda (key _value)
-             (when (string-prefix-p old-prefix key)
+  (dolist (ruler (pyim-dhashcache-upgrade-icode2word-rulers))
+    (let ((old-prefix-list (car ruler))
+          (new-prefix (cdr ruler)))
+      (dolist (old-prefix old-prefix-list)
+        (maphash
+         (lambda (key _value)
+           (if (string-prefix-p old-prefix key)
                (let* ((key-words (gethash key pyim-dhashcache-icode2word))
                       (new-key (concat new-prefix (string-remove-prefix old-prefix key)))
                       (new-key-words (gethash new-key pyim-dhashcache-icode2word))
                       (merged-value (delete-dups `(,@new-key-words ,@key-words))))
                  (puthash new-key merged-value pyim-dhashcache-icode2word)
-                 (message "PYIM icode2word upgrade: %S %S -> %S %S" key key-words new-key merged-value)
-                 (when delete-old-key-p
+                 (message "PYIM: %S %S -> %S %S in `pyim-dhashcache-icode2word'."
+                          key key-words new-key merged-value)
+                 (when delete-old-key
                    (remhash key pyim-dhashcache-icode2word)
-                   (message "PYIM icode2word upgrade: %S has been deleted." key)))))
-           pyim-dhashcache-icode2word))))))
+                   (message "PYIM: %S has been deleted in `pyim-dhashcache-icode2word'." key)))
+             (message "PYIM: No need to upgrade in `pyim-dhashcache-icode2word'.")))
+         pyim-dhashcache-icode2word)))))
+
+(defun pyim-dhashcache-upgrade-icode2word-rulers ()
+  "返回 icode2word 升级规则。
+
+类似： (((\".\") . \"wubi/\") ((\"@\") . \"cangjie/\"))."
+  (delete-dups
+   (remove nil
+           (mapcar
+            (lambda (scheme)
+              (let ((code-prefix (pyim-scheme-code-prefix scheme))
+                    (code-prefix-history (pyim-scheme-code-prefix-history scheme)))
+                (when code-prefix-history
+                  (cons code-prefix-history code-prefix))))
+            pyim-schemes))))
 
 ;; ** 保存 dhashcache 相关函数
 (cl-defmethod pyim-dcache-save-caches
