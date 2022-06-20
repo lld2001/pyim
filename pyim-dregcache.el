@@ -44,6 +44,16 @@
 (defvar pyim-dregcache-iword2count nil)
 (defvar pyim-dregcache-dicts-md5 nil)
 
+;; ** 获取当前可用后端
+(cl-defmethod pyim-dcache-backend
+  (&context (pyim-dcache-backend (eql pyim-dregcache)))
+  "返回当前可用的 dcache backend."
+  (if (and (featurep 'pyim-dregcache)
+           ;; pyim-dregcache 后端目前只支持全拼或者双拼。
+           (pyim-scheme-quanpin-p (pyim-scheme-current)))
+      'pyim-dregcache
+    'pyim-dhashcache))
+
 ;; ** 初始化 dregcache 相关函数
 (cl-defmethod pyim-dcache-init-variables
   (&context ((pyim-dcache-backend) (eql pyim-dregcache)))
@@ -280,17 +290,15 @@
   "读取并加载所有相关词库 dcache.
 
 如果 FORCE 为真，强制加载。"
-  (pyim-dcache-init-variables)
-  (when pyim-dcache-auto-update
-    (pyim-dregcache-update-personal-words force)
-    (let* ((dict-files (pyim-dict-get-enabled-dict-files))
-           (dicts-md5 (pyim-dcache-create-files-md5 dict-files)))
-      (when pyim-debug
-        (message "pyim-dregcache-update: pyim-dicts=%s pyim-extra-dicts=%s dict-files=%s"
-                 pyim-dicts
-                 pyim-extra-dicts
-                 dict-files))
-      (pyim-dregcache-update-code2word dict-files dicts-md5 force))))
+  (pyim-dregcache-update-personal-words force)
+  (let* ((dict-files (pyim-dict-get-enabled-dict-files))
+         (dicts-md5 (pyim-dcache-create-files-md5 dict-files)))
+    (when pyim-debug
+      (message "pyim-dregcache-update: pyim-dicts=%s pyim-extra-dicts=%s dict-files=%s"
+               pyim-dicts
+               pyim-extra-dicts
+               dict-files))
+    (pyim-dregcache-update-code2word dict-files dicts-md5 force)))
 
 (defun pyim-dregcache-update-personal-words (&optional force)
   "合并 `pyim-dregcache-icode2word' 磁盘文件. 加载排序后的结果.
@@ -475,7 +483,6 @@ update-icode2word 目前只要是用于更新型码输入法的 code-prefix, 所
   (file &context ((pyim-dcache-backend) (eql pyim-dregcache))
         &optional confirm)
   "将个人词库存入 FILE."
-  (pyim-dcache-init-variables)
   (when pyim-dregcache-icode2word
     ;; 按词频排序，把词频信息保存到用户词典
     (pyim-dregcache-sort-icode2word)

@@ -585,9 +585,9 @@
     (should (equal (pyim-candidates-dcache-quanpin-words imobjs1 quanpin nil 10)
                    '(("你" "您" "妮") nil nil ("南" "乃" "囊" "脑" "呢" "内" "嫩" "能" "你" "年"))))
     (should (equal (pyim-candidates-dcache-quanpin-words imobjs2 quanpin nil 10)
-                   '(("你" "尼") ("尼" "你") ("你" "尼" "尼" "你") nil)))
+                   '(("你" "尼") ("尼" "你") ("你" "尼" "呢" "泥" "拟" "逆" "倪" "妮" "腻" "匿") nil)))
     (should (equal (pyim-candidates-dcache-quanpin-words imobjs3 quanpin nil 10)
-                   '(("你好" "尼耗" "呢耗") ("你好" "尼耗") ("你好" "尼耗" "呢耗" "你好" "尼耗") nil)))))
+                   '(("你好" "尼耗" "呢耗") ("你好" "尼耗") ("你好" "尼耗" "呢耗") nil)))))
 
 (ert-deftest pyim-tests-pyim-candidates-quanpin-personal-words ()
   (let* ((pyim-dhashcache-icode2word (make-hash-table :test #'equal))
@@ -625,19 +625,24 @@
     (should (equal (pyim-candidates-quanpin-common-words (car imobjs3) quanpin)
                    '("呢耗" "你好" "你坏" "尼耗")))))
 
-(ert-deftest pyim-tests-pyim-candidates-quanpin-chars ()
+(ert-deftest pyim-tests-pyim-candidates-quanpin-first-chars ()
   (let* ((pyim-dhashcache-icode2word (make-hash-table :test #'equal))
          (pyim-dhashcache-code2word (make-hash-table :test #'equal))
          (quanpin (pyim-scheme-get 'quanpin))
          (imobjs (pyim-imobjs-create "nihao" quanpin)))
     (puthash "ni" (list "你" "呢") pyim-dhashcache-icode2word)
     (puthash "ni" (list "你" "尼") pyim-dhashcache-code2word)
-    (should (equal (pyim-candidates-quanpin-chars (car imobjs) quanpin)
-                   '("你" "呢" "你" "尼")))))
+    (should (equal (pyim-candidates-quanpin-first-chars (car imobjs) quanpin 10)
+                   '("你" "呢" "尼" "泥" "拟" "逆" "倪" "妮" "腻" "匿")))))
 
-(ert-deftest pyim-tests-pyim-candidates-pymap-chars ()
-  (should (equal (pyim-candidates-pymap-chars "ni" 10)
-                 '("你" "年" "娘" "鸟" "摄" "您" "宁" "牛" "尼" "念"))))
+(ert-deftest pyim-tests-pyim-candidates-quanpin-first-possible-chars ()
+  (let* ((quanpin (pyim-scheme-get 'quanpin))
+         (imobjs1 (pyim-imobjs-create "ni" quanpin))
+         (imobjs2 (pyim-imobjs-create "nihao" quanpin)))
+    (should (equal (pyim-candidates-quanpin-first-possible-chars (car imobjs1) quanpin 10)
+                   '("你" "年" "娘" "鸟" "摄" "您" "宁" "牛" "尼" "念")))
+    (should (equal (pyim-candidates-quanpin-first-possible-chars (car imobjs2) quanpin 10)
+                   '("你" "尼" "呢" "泥" "拟" "逆" "倪" "妮" "腻" "匿")))))
 
 (ert-deftest pyim-tests-pyim-candidates-search-buffer ()
   (with-temp-buffer
@@ -773,6 +778,39 @@
     (should (equal (pyim-cstring-to-xingma "工房丛房" wubi) "aywy"))
     (should (equal (pyim-cstring-to-xingma "工" wubi t) '("aaaa")))
     (should (equal (pyim-cstring-to-xingma "工房" wubi t) '("aayn")))))
+
+(ert-deftest pyim-tests-pyim-cstring-to-codes ()
+  (let ((pyim-dhashcache-word2code (make-hash-table :test #'equal))
+        (pyim-dhashcache-word2code (make-hash-table :test #'equal))
+        (quanpin (pyim-scheme-get 'quanpin))
+        (wubi (pyim-scheme-get 'wubi))
+        (cangjie (pyim-scheme-get 'cangjie)))
+    (should (equal (pyim-cstring-to-codes "行行" quanpin)
+                   '("xing-xing" "xing-heng" "xing-hang"
+                     "heng-xing" "heng-heng" "heng-hang"
+                     "hang-xing" "hang-heng" "hang-hang")))
+    (should (equal (pyim-cstring-to-codes "行行" quanpin "xinxin")
+                   '("xing-xing")))
+    (should (equal (pyim-cstring-to-codes "行行" quanpin "xx")
+                   '("xing-xing")))
+    (should (equal (pyim-cstring-to-codes "行行" quanpin "xinhang")
+                   '("xing-hang")))
+    (should (equal (pyim-cstring-to-codes "行行" quanpin "xh")
+                   '("xing-heng")))
+
+    (puthash "工" (list "wubi/aaaa" "cangjie/mlm" "gong") pyim-dhashcache-word2code)
+    (puthash "房" (list "wubi/yny") pyim-dhashcache-word2code)
+    (puthash "丛" (list "wubi/wwg") pyim-dhashcache-word2code)
+
+    (should (equal (pyim-cstring-to-codes "工" cangjie) '("mlm")))
+    (should-not (pyim-cstring-to-codes "工房" cangjie))
+
+    (should (equal (pyim-cstring-to-codes "工" wubi) '("aaaa")))
+    (should (equal (pyim-cstring-to-codes "工房" wubi) '("aayn")))
+    (should (equal (pyim-cstring-to-codes "工房丛" wubi) '("ayww")))
+    (should (equal (pyim-cstring-to-codes "工房丛房" wubi) '("aywy")))
+    (should (equal (pyim-cstring-to-codes "工" wubi t) '("aaaa")))
+    (should (equal (pyim-cstring-to-codes "工房" wubi t) '("aayn")))))
 
 (ert-deftest pyim-tests-pyim-cstring-words-at-point ()
   (let ((pyim-dhashcache-code2word (make-hash-table :test #'equal)))
@@ -1000,6 +1038,7 @@
         (file (pyim-tests-make-temp-file)))
     (puthash "你好" 10 pyim-dhashcache-iword2count)
     (puthash "尼耗" 1 pyim-dhashcache-iword2count)
+    (puthash "wo-hao" (list "我好") pyim-dhashcache-icode2word)
     (puthash "ni-hao" (list "你好" "尼耗") pyim-dhashcache-icode2word)
     (pyim-dcache-export-words-and-counts file)
     (with-temp-buffer
@@ -1008,6 +1047,7 @@
                      ";;; -*- coding: utf-8-unix -*-
 你好 10
 尼耗 1
+我好 0
 ")))
     (pyim-dcache-export-words-and-counts file nil t)
     (with-temp-buffer
@@ -1016,6 +1056,7 @@
                      ";;; -*- coding: utf-8-unix -*-
 你好
 尼耗
+我好
 ")))
     (pyim-dcache-export-personal-words file)
     (with-temp-buffer
@@ -1023,7 +1064,37 @@
       (should (equal (buffer-string)
                      ";;; -*- coding: utf-8-unix -*-
 ni-hao 你好 尼耗
+wo-hao 我好
 ")))))
+
+(ert-deftest pyim-tests-pyim-dcache-insert-word ()
+  (let ((pyim-dcache-backend 'pyim-dhashcache)
+        (pyim-dhashcache-icode2word (make-hash-table :test #'equal)))
+    (pyim-dcache-insert-word "你好" "ni-hao" t)
+    (pyim-dcache-insert-word "尼耗" "ni-hao" t)
+    (pyim-dcache-insert-word "呢耗" "ni-hao" nil)
+    (pyim-dcache-insert-word (propertize "你豪" :noexport t) "ni-hao" nil)
+    (should (equal (gethash "ni-hao" pyim-dhashcache-icode2word)
+                   '("尼耗" "你好" "呢耗" #("你豪" 0 2 (:noexport t)))))
+    (should (get-text-property 0 :noexport (nth 3 (gethash "ni-hao" pyim-dhashcache-icode2word))))
+    (pyim-dcache-insert-word "你豪" "ni-hao" nil)
+    (should-not (get-text-property 0 :noexport (nth 3 (gethash "ni-hao" pyim-dhashcache-icode2word))))))
+
+(ert-deftest pyim-tests-pyim-dcache-update-wordcount ()
+  (let ((pyim-dcache-backend 'pyim-dhashcache)
+        (pyim-dhashcache-iword2count (make-hash-table :test #'equal)))
+    (pyim-dcache-update-wordcount "你好")
+    (should (equal (gethash "你好" pyim-dhashcache-iword2count) 0))
+    (pyim-dcache-update-wordcount "你好" (lambda (n) (+ n 3)))
+    (should (equal (gethash "你好" pyim-dhashcache-iword2count) 3))
+    (pyim-dcache-update-wordcount "你好" #'1+)
+    (should (equal (gethash "你好" pyim-dhashcache-iword2count) 4))
+    (pyim-dcache-update-wordcount "你好" 10)
+    (should (equal (gethash "你好" pyim-dhashcache-iword2count) 10))
+    (pyim-dcache-update-wordcount "你好" nil)
+    (should (equal (gethash "你好" pyim-dhashcache-iword2count) 10))
+    (pyim-dcache-update-wordcount "你好" "xxx")
+    (should (equal (gethash "你好" pyim-dhashcache-iword2count) 10))))
 
 ;; ** pyim-dict 相关单元测试
 (ert-deftest pyim-tests-pyim-dict ()
@@ -1514,6 +1585,15 @@ Transfer-Encoding: chunked
   )
 
 ;; ** pyim-probe 相关单元测试
+(ert-deftest pyim-tests-pyim-page-tooltip-valid-p ()
+  (let ((pyim-page-tooltip-infos
+         `((posframe1 :package posframe1)
+           (posframe2 :package posframe :test (lambda () t))
+           (posframe3 :package posframe :test (lambda () nil)))))
+    (should-not (pyim-page-tooltip-valid-p 'posframe1))
+    (should (pyim-page-tooltip-valid-p 'posframe2))
+    (should-not (pyim-page-tooltip-valid-p 'posframe3))))
+
 (ert-deftest pyim-tests-pyim-page-get-page-style ()
   (let ((pyim-page-tooltip-style-alist
          '((minibuffer . minibuffer)))
@@ -1615,6 +1695,243 @@ Transfer-Encoding: chunked
   (should (equal (apply #'pyim-autoselector-xingma-1
                         '(4 "aaaa" ("工") ("工")))
                  '(:select current))))
+
+;; ** pyim-process 相关单元测试
+(ert-deftest pyim-tests-pyim-process-ui-init ()
+  (let* ((pyim-test nil)
+         (pyim-process-ui-init-hook
+          (list (lambda ()
+                  (setq pyim-test 'hello)))))
+    (pyim-process-ui-init)
+    (should (equal pyim-test 'hello))))
+
+(ert-deftest pyim-tests-pyim-process-start-daemon ()
+  (let* ((pyim-test nil)
+         (pyim-process-start-daemon-hook
+          (list (lambda ()
+                  (setq pyim-test 'hello)))))
+    (pyim-process-start-daemon)
+    (should (equal pyim-test 'hello))))
+
+(ert-deftest pyim-tests-pyim-process-stop-daemon ()
+  (let* ((pyim-test nil)
+         (pyim-process-stop-daemon-hook
+          (list (lambda ()
+                  (setq pyim-test 'hello)))))
+    (pyim-process-stop-daemon)
+    (should (equal pyim-test 'hello))))
+
+(ert-deftest pyim-tests-pyim-process-auto-switch-english-input-p ()
+  (let ((pyim-english-input-switch-functions
+         (list (lambda () t)
+               (lambda () nil)
+               (lambda () nil))))
+    (should (pyim-process-auto-switch-english-input-p)))
+
+  (let ((pyim-english-input-switch-functions
+         (list (lambda () t)
+               (lambda () t)
+               (lambda () nil))))
+    (should (pyim-process-auto-switch-english-input-p)))
+
+  (let ((pyim-english-input-switch-functions
+         (list (lambda () nil)
+               (lambda () nil)
+               (lambda () nil))))
+    (should-not (pyim-process-auto-switch-english-input-p)))
+
+  (let ((pyim-english-input-switch-functions nil))
+    (should-not (pyim-process-auto-switch-english-input-p)))
+
+  (let ((pyim-english-input-switch-functions
+         (lambda () nil)))
+    (should-not (pyim-process-auto-switch-english-input-p)))
+
+  (let ((pyim-english-input-switch-functions
+         (lambda () t)))
+    (should (pyim-process-auto-switch-english-input-p)))
+
+  (let ((pyim-english-input-switch-functions "xxx"))
+    (should-not (pyim-process-auto-switch-english-input-p))))
+
+(ert-deftest pyim-tests-pyim-process-force-input-chinese-p ()
+  (let ((pyim-process-force-input-chinese nil)
+        (pyim-force-input-chinese-functions
+         (list (lambda () t)
+               (lambda () nil)
+               (lambda () nil))))
+    (should (pyim-process-force-input-chinese-p)))
+
+  (let ((pyim-process-force-input-chinese nil)
+        (pyim-force-input-chinese-functions
+         (list (lambda () t)
+               (lambda () t)
+               (lambda () nil))))
+    (should (pyim-process-force-input-chinese-p)))
+
+  (let ((pyim-process-force-input-chinese nil)
+        (pyim-force-input-chinese-functions
+         (lambda () t)))
+    (should (pyim-process-force-input-chinese-p)))
+
+  (let ((pyim-process-force-input-chinese nil)
+        (pyim-force-input-chinese-functions
+         (lambda () nil)))
+    (should-not (pyim-process-force-input-chinese-p)))
+
+  (let ((pyim-process-force-input-chinese nil)
+        (pyim-force-input-chinese-functions "xxx"))
+    (should-not (pyim-process-force-input-chinese-p)))
+
+  (let ((pyim-process-force-input-chinese nil)
+        (pyim-force-input-chinese-functions
+         (list (lambda () nil)
+               (lambda () nil)
+               (lambda () nil))))
+    (should-not (pyim-process-force-input-chinese-p)))
+
+  (let ((pyim-process-force-input-chinese t)
+        (pyim-force-input-chinese-functions nil))
+    (should (pyim-process-force-input-chinese-p)))
+
+  (let ((pyim-process-force-input-chinese t)
+        (pyim-force-input-chinese-functions
+         (list (lambda () nil)
+               (lambda () nil)
+               (lambda () nil))))
+    (should (pyim-process-force-input-chinese-p))))
+
+(ert-deftest pyim-tests-pyim-process-input-chinese-predicate-1 ()
+  (cl-letf (((symbol-function 'pyim-process-force-input-chinese-p)
+             (lambda () t))
+            (pyim-process-input-ascii t)
+            ((symbol-function 'pyim-process-auto-switch-english-input-p)
+             (lambda () t)))
+    (should (pyim-process-input-chinese-predicate-1)))
+
+  (cl-letf (((symbol-function 'pyim-process-force-input-chinese-p)
+             (lambda () t))
+            (pyim-process-input-ascii nil)
+            ((symbol-function 'pyim-process-auto-switch-english-input-p)
+             (lambda () t)))
+    (should (pyim-process-input-chinese-predicate-1)))
+
+  (cl-letf (((symbol-function 'pyim-process-force-input-chinese-p)
+             (lambda () t))
+            (pyim-process-input-ascii nil)
+            ((symbol-function 'pyim-process-auto-switch-english-input-p)
+             (lambda () t)))
+    (should (pyim-process-input-chinese-predicate-1)))
+
+  (cl-letf (((symbol-function 'pyim-process-force-input-chinese-p)
+             (lambda () nil))
+            (pyim-process-input-ascii nil)
+            ((symbol-function 'pyim-process-auto-switch-english-input-p)
+             (lambda () nil)))
+    (should (pyim-process-input-chinese-predicate-1)))
+
+  (cl-letf (((symbol-function 'pyim-process-force-input-chinese-p)
+             (lambda () nil))
+            (pyim-process-input-ascii t)
+            ((symbol-function 'pyim-process-auto-switch-english-input-p)
+             (lambda () nil)))
+    (should-not (pyim-process-input-chinese-predicate-1)))
+
+  (cl-letf (((symbol-function 'pyim-process-force-input-chinese-p)
+             (lambda () nil))
+            (pyim-process-input-ascii nil)
+            ((symbol-function 'pyim-process-auto-switch-english-input-p)
+             (lambda () t)))
+    (should-not (pyim-process-input-chinese-predicate-1)))
+
+  (cl-letf (((symbol-function 'pyim-process-force-input-chinese-p)
+             (lambda () nil))
+            (pyim-process-input-ascii nil)
+            ((symbol-function 'pyim-process-auto-switch-english-input-p)
+             (lambda () nil)))
+    (should (pyim-process-input-chinese-predicate-1))))
+
+(ert-deftest pyim-tests-pyim-process-input-chinese-predicate-2 ()
+  (should (pyim-process-input-chinese-predicate-2 ?a "" "abc" "def"))
+  (should-not (pyim-process-input-chinese-predicate-2 ?d "" "abc" "def"))
+  (should (pyim-process-input-chinese-predicate-2 ?d "a" "abc" "def"))
+  (should-not (pyim-process-input-chinese-predicate-2 ?g "a" "abc" "def")))
+
+(ert-deftest pyim-tests-pyim-process-input-chinese-p ()
+  (cl-letf (((symbol-function 'pyim-process-input-chinese-predicate-1)
+             (lambda (&rest _) nil))
+            ((symbol-function 'pyim-process-input-chinese-predicate-2)
+             (lambda (&rest _) nil)))
+    (should-not (pyim-process-input-chinese-p)))
+
+  (cl-letf (((symbol-function 'pyim-process-input-chinese-predicate-1)
+             (lambda (&rest _) t))
+            ((symbol-function 'pyim-process-input-chinese-predicate-2)
+             (lambda (&rest _) nil)))
+    (should-not (pyim-process-input-chinese-p)))
+
+  (cl-letf (((symbol-function 'pyim-process-input-chinese-predicate-1)
+             (lambda (&rest _) nil))
+            ((symbol-function 'pyim-process-input-chinese-predicate-2)
+             (lambda (&rest _) t)))
+    (should-not (pyim-process-input-chinese-p)))
+
+  (cl-letf (((symbol-function 'pyim-process-input-chinese-predicate-1)
+             (lambda (&rest _) t))
+            ((symbol-function 'pyim-process-input-chinese-predicate-2)
+             (lambda (&rest _) t)))
+    (should (pyim-process-input-chinese-p))))
+
+(ert-deftest pyim-tests-pyim-process-autoselector ()
+  (let* ((pyim-process-autoselector
+          (list (lambda ()
+                  (list :select 'current :replace "test1"))
+                (lambda ()
+                  (list :select 'current :replace "test1"))
+                (lambda ()
+                  (list :select 'current :replace "test2"))
+                (lambda ()
+                  (list :select 'current :replace "test2"))
+                (lambda ()
+                  (list :select 'last :replace "test3"))
+                (lambda ()
+                  (list :select 'last :replace "test3"))
+                (lambda ()
+                  (list :select 'last :replace "test4"))
+                (lambda ()
+                  (list :select 'last :replace "test4"))))
+         (results (pyim-process-autoselector-results)))
+    (should (equal results
+                   '((:select current :replace "test1")
+                     (:select current :replace "test2")
+                     (:select last :replace "test3")
+                     (:select last :replace "test4"))))
+    (should (equal (pyim-process-autoselector-find-result results 'current)
+                   '(:select current :replace "test1")))
+    (should (equal (pyim-process-autoselector-find-result results 'last)
+                   '(:select last :replace "test3")))))
+
+(ert-deftest pyim-tests-pyim-process-self-insert-command-p ()
+  (let ((pyim-process-self-insert-commands nil))
+    (cl-pushnew 'test pyim-process-self-insert-commands)
+    (should (pyim-process-self-insert-command-p 'test))))
+
+(ert-deftest pyim-tests-pyim-process-ui-refresh ()
+  (let* ((result1 nil)
+         (result2 nil)
+         (pyim-process-ui-refresh-hook
+          (list (lambda (x)
+                  (setq result1 "result1"))
+                (lambda (x)
+                  (setq result2 "result2")))))
+    (pyim-process-ui-refresh)
+    (should (equal result1 "result1"))
+    (should (equal result2 "result2"))))
+
+(ert-deftest pyim-tests-pyim-process-merge-candidates ()
+  (should (equal (pyim-process-merge-candidates
+                  '("a" "b" "c") '("d" "e" "f" "a" "b"))
+                 '("d" "a" "b" "c" "e" "f"))))
 
 (ert-run-tests-batch-and-exit)
 
