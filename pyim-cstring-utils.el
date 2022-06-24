@@ -29,6 +29,7 @@
 ;; * 代码                                                           :code:
 (require 'cl-lib)
 (require 'pyim-cstring)
+(require 'pyim-dhashcache)
 
 (defgroup pyim-cstring nil
   "Chinese string tools for pyim."
@@ -60,7 +61,7 @@ CHINESE-STRING 分词，得到一个词条 alist，这个 alist 的元素都是�
   (pyim-dcache-init-variables)
 
   (let (result)
-    (dolist (string-list (pyim-cstring-substrings chinese-string max-word-length))
+    (dolist (string-list (pyim-cstring--substrings chinese-string max-word-length))
       (let ((pinyin-list (pyim-cstring-to-pinyin (car string-list) nil "-" t)))
         (dolist (pinyin pinyin-list)
           (let ((words (pyim-dcache-get pinyin '(code2word)))) ; 忽略个人词库可以提高速度
@@ -94,13 +95,13 @@ CHINESE-STRING 分词，得到一个词条 alist，这个 alist 的元素都是�
   (mapconcat (lambda (str)
                (when (> (length str) 0)
                  (if (not (pyim-string-match-p "\\CC" str))
-                     (pyim-cstring-split-to-string-1
+                     (pyim-cstring--split-to-string
                       str prefer-short-word separator max-word-length)
                    str)))
-             (pyim-cstring-partition string) (or separator " ")))
+             (pyim-cstring--partition string) (or separator " ")))
 
-(defun pyim-cstring-split-to-string-1 (chinese-string &optional prefer-short-word
-                                                      separator max-word-length)
+(defun pyim-cstring--split-to-string (chinese-string &optional prefer-short-word
+                                                     separator max-word-length)
   "`pyim-cstring-split-to-string' 内部函数。"
   (let ((str-length (length chinese-string))
         (word-list (pyim-cstring-split-to-list
@@ -247,8 +248,9 @@ CHINESE-STRING 分词，得到一个词条 alist，这个 alist 的元素都是�
            (max-length (max (or max-length 1) 1)))
       (backward-char max-length))))
 
-(defalias 'pyim-forward-word 'pyim-cstring-forward-word)
-(defalias 'pyim-backward-word 'pyim-cstring-backward-word)
+(defalias 'pyim-cwords-at-point #'pyim-cstring-words-at-point)
+(defalias 'pyim-forward-word #'pyim-cstring-forward-word)
+(defalias 'pyim-backward-word #'pyim-cstring-backward-word)
 
 ;; * Footer
 (provide 'pyim-cstring-utils)

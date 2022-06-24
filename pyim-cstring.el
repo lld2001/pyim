@@ -37,7 +37,7 @@
   "Chinese string tools for pyim."
   :group 'pyim)
 
-(defun pyim-cstring-partition (string &optional to-cchar)
+(defun pyim-cstring--partition (string &optional to-cchar)
   "STRING partition.
 
 1. Hello你好 -> (\"Hello\" \"你\" \"好\"), when TO-CCHAR is non-nil.
@@ -55,7 +55,7 @@
           (cl-mapcar #'char-to-string string)
         (list string)))))
 
-(defun pyim-cstring-substrings (cstring &optional max-length number)
+(defun pyim-cstring--substrings (cstring &optional max-length number)
   "找出 CSTRING 中所有长度不超过 MAX-LENGTH 的子字符串，生成一个 alist。
 
 这个 alist 中的每个元素为：(子字符串 开始位置 结束位置), 参数
@@ -63,19 +63,19 @@ NUMBER 用于递归，表示子字符串在 CSTRING 中的位置。"
   (let ((number (or number 0)))
     (cond
      ((= (length cstring) 0) nil)
-     (t (append (pyim-cstring-substrings-1 cstring max-length number)
-                (pyim-cstring-substrings (substring cstring 1)
-                                         max-length (1+ number)))))))
+     (t (append (pyim-cstring--substrings-1 cstring max-length number)
+                (pyim-cstring--substrings (substring cstring 1)
+                                          max-length (1+ number)))))))
 
-(defun pyim-cstring-substrings-1 (cstring max-length number)
-  "`pyim-cstring-substrings' 的内部函数。"
+(defun pyim-cstring--substrings-1 (cstring max-length number)
+  "`pyim-cstring--substrings' 的内部函数。"
   (cond
    ((< (length cstring) 2) nil)
    (t (append
        (let ((length (length cstring)))
          (when (<= length (or max-length 6))
            (list (list cstring number (+ number length)))))
-       (pyim-cstring-substrings-1
+       (pyim-cstring--substrings-1
         (substring cstring 0 -1)
         max-length number)))))
 
@@ -124,7 +124,7 @@ BUG: 当 STRING 中包含其它标点符号，并且设置 SEPERATER 时，结�
                       (if (pyim-string-match-p "\\cc" str)
                           (pyim-pymap-cchar2py-get str)
                         (list str)))
-                    (pyim-cstring-partition string t)))
+                    (pyim-cstring--partition string t)))
 
       ;; 通过排列组合的方式, 重排 pinyins-list。
       ;; 比如：(("Hello") ("yin") ("hang" "xing")) -> (("Hello" "yin" "hang") ("Hello" "yin" "xing"))
@@ -266,10 +266,9 @@ CRITERIA 字符串一般是通过 imobjs 构建的，它保留了用户原始的
       (list (car codes-sorted)))))
 
 ;; PYIM 重构以前使用的一些函数名称，alias 一下，便于兼容。
-(defalias 'pyim-hanzi2pinyin-simple 'pyim-cstring-to-pinyin-simple)
-(defalias 'pyim-hanzi2pinyin 'pyim-cstring-to-pinyin)
-(defalias 'pyim-hanzi2xingma 'pyim-cstring-to-xingma)
-(defalias 'pyim-cwords-at-point 'pyim-cstring-words-at-point)
+(defalias 'pyim-hanzi2pinyin-simple #'pyim-cstring-to-pinyin-simple)
+(defalias 'pyim-hanzi2pinyin #'pyim-cstring-to-pinyin)
+(defalias 'pyim-hanzi2xingma #'pyim-cstring-to-xingma)
 
 ;; * Footer
 (provide 'pyim-cstring)

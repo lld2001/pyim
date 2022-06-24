@@ -7,7 +7,7 @@
 ;;         Feng Shu <tumashu@163.com>
 ;; Maintainer: Feng Shu <tumashu@163.com>
 ;; URL: https://github.com/tumashu/pyim
-;; Version: 4.2.1
+;; Version: 5.1.0
 ;; Keywords: convenience, Chinese, pinyin, input-method
 ;; Package-Requires: ((emacs "25.1") (async "1.6") (xr "1.13"))
 
@@ -37,6 +37,11 @@
 (require 'pyim-autoselector)
 (require 'pyim-common)
 (require 'pyim-cstring)
+(require 'pyim-dhashcache)
+;; NOTE: pyim 默认使用 dhashcache, 按理说不需要加载 dregcache, 但以前 pyim 支持
+;; 动态加载后端，由于简化代码的原因，这个功能取消了，require dregcache 是为了向
+;; 后兼容，未来也许会取消加载。
+(require 'pyim-dregcache)
 (require 'pyim-indicator)
 (require 'pyim-page)
 (require 'pyim-preview)
@@ -146,7 +151,7 @@ Tip: 用户也可以利用 `pyim-outcome-trigger-function-default' 函数
     (pyim-process-ui-init)
     (with-silent-modifications
       (unwind-protect
-          (let ((input-string (pyim-input-method-1 key)))
+          (let ((input-string (pyim--input-method key)))
             ;; (message "input-string: %s" input-string)
             (when (and (stringp input-string)
                        (> (length input-string) 0))
@@ -155,8 +160,8 @@ Tip: 用户也可以利用 `pyim-outcome-trigger-function-default' 函数
                 (mapcar #'identity input-string))))
         (pyim-process-terminate)))))
 
-(defun pyim-input-method-1 (key)
-  "`pyim-input-method-1' 是 `pyim-input-method' 内部使用的函数。
+(defun pyim--input-method (key)
+  "`pyim--input-method' 是 `pyim-input-method' 内部使用的函数。
 
 这个函数比较复杂，作许多低层工作，但它的一个重要流程是：
 
@@ -184,13 +189,13 @@ Tip: 用户也可以利用 `pyim-outcome-trigger-function-default' 函数
              (modified-p (buffer-modified-p))
              last-command-event last-command this-command)
 
-        (setq pyim-process-translating t)
+        (pyim-process-set-translating-flag t)
         (pyim-process-cleanup-input-output)
 
         (when key
           (pyim-add-unread-command-events key))
 
-        (while pyim-process-translating
+        (while (pyim-process-translating-p)
           (set-buffer-modified-p modified-p)
           (let* ((keyseq (read-key-sequence nil nil nil t))
                  (cmd (lookup-key pyim-mode-map keyseq)))
@@ -234,7 +239,7 @@ pyim 是使用 `pyim-activate' 来启动输入法，这个命令主要做如下�
 2. 创建汉字到拼音和拼音到汉字的 hash table。
 3. 创建词库缓存 dcache.
 4. 运行 hook： `pyim-load-hook'。
-5. 将 `pyim-kill-emacs-hook-function' 命令添加到 `kill-emacs-hook' , emacs 关闭
+5. 将 `pyim--kill-emacs-hook-function' 命令添加到 `kill-emacs-hook' , emacs 关闭
 之前将用户选择过的词生成的缓存和词频缓存保存到文件，供以后使用。
 6. 设定变量：
    1. `input-method-function'
@@ -256,11 +261,11 @@ pyim 使用函数 `pyim-activate' 启动输入法的时候，会将变量
   (pyim-process-init-dcaches)
 
   ;; 启动或者重启的时候，退出辅助输入法。
-  (setq pyim-assistant-scheme-enable nil)
+  (pyim-scheme-disable-assistant)
 
   (run-hooks 'pyim-load-hook)
   ;; Make sure personal or other dcache are saved to file before kill emacs.
-  (add-hook 'kill-emacs-hook #'pyim-kill-emacs-hook-function)
+  (add-hook 'kill-emacs-hook #'pyim--kill-emacs-hook-function)
 
   (setq deactivate-current-input-method-function #'pyim-deactivate)
   ;; If we are in minibuffer, turn off the current input method
@@ -271,9 +276,10 @@ pyim 使用函数 `pyim-activate' 启动输入法的时候，会将变量
   (setq-local input-method-function #'pyim-input-method)
   nil)
 
-(defun pyim-kill-emacs-hook-function ()
+(defun pyim--kill-emacs-hook-function ()
   "Pyim function which is used in `kill-emacs-hook'."
-  (pyim-process-save-dcaches t))
+  (pyim-process-save-dcaches t)
+  t)
 
 ;; ** 取消激活功能
 (defun pyim-deactivate ()
@@ -336,7 +342,7 @@ REFRESH-COMMON-DCACHE 已经废弃，不要再使用了。"
     (pyim-process-outcome-handle 'last-char)
     (pyim-process-terminate))))
 
-(cl-pushnew 'pyim-self-insert-command pyim-process-self-insert-commands)
+(pyim-process-register-self-insert-command 'pyim-self-insert-command)
 
 ;; ** 加词功能
 (defun pyim-create-word-at-point (&optional number silent)
@@ -441,6 +447,7 @@ MERGE-METHOD 是一个函数，这个函数需要两个数字参数，代表词�
 如果 FILE 为 nil, 提示用户指定导出文件位置, 如果 CONFIRM 为
 non-nil，文件存在时将会提示用户是否覆盖，默认为覆盖模式"
   (interactive "F将词条和词频信息导出到文件: ")
+  (pyim-dcache-init-variables)
   (pyim-dcache-export-words-and-counts file confirm ignore-counts)
   (message "PYIM: 词条和词频信息导出完成。"))
 
@@ -450,6 +457,7 @@ non-nil，文件存在时将会提示用户是否覆盖，默认为覆盖模式"
 如果 FILE 为 nil, 提示用户指定导出文件位置, 如果 CONFIRM 为 non-nil，
 文件存在时将会提示用户是否覆盖，默认为覆盖模式。"
   (interactive "F将个人词条导出到文件：")
+  (pyim-dcache-init-variables)
   (pyim-dcache-export-personal-words file confirm)
   (message "PYIM: 个人词条导出完成。"))
 
@@ -479,9 +487,9 @@ FILE 的格式与 `pyim-dcache-export' 生成的文件格式相同，
 (defun pyim-delete-last-word ()
   "从个人词库中删除最新创建的词条。"
   (interactive)
-  (when pyim-process-last-created-words
-    (pyim-process-delete-word (car pyim-process-last-created-words))
-    (message "pyim: 从个人词库中删除词条 “%s” !" (car pyim-process-last-created-words))))
+  (when (pyim-process-last-created-words)
+    (pyim-process-delete-word (car (pyim-process-last-created-words)))
+    (message "pyim: 从个人词库中删除词条 “%s” !" (car (pyim-process-last-created-words)))))
 
 (defun pyim-delete-word-at-point (&optional number silent)
   "将光标前字符数为 NUMBER 的中文字符串从个人词库中删除
@@ -506,11 +514,10 @@ FILE 的格式与 `pyim-dcache-export' 生成的文件格式相同，
         (deactivate-mark))))
    (t (let ((words (completing-read-multiple
                     "请选择需要删除的词条(可多选): "
-                    pyim-process-last-created-words)))
+                    (pyim-process-last-created-words))))
         (dolist (word words)
           (pyim-process-delete-word word)
-          (setq pyim-process-last-created-words
-                (remove word pyim-process-last-created-words))
+          (pyim-process-remove-last-created-word word)
           (message "将词条: %S 从 personal 缓冲中删除。" word))))))
 
 ;; ** 选词功能
@@ -552,7 +559,7 @@ FILE 的格式与 `pyim-dcache-export' 生成的文件格式相同，
           ;; 第三次选择：刀，   output = 小李飞刀
           (- (length (pyim-process-get-outcome))
              (length (pyim-process-get-outcome 1))))
-         ;; pyim-imobjs 包含 *pyim-entered-buffer* 里面光标前面的字符
+         ;; pyim-imobjs 包含 *pyim-entered--buffer* 里面光标前面的字符
          ;; 串，通过与 selected-word 做比较，获取光标前未转换的字符串。
          ;; to-be-translated.
          (to-be-translated
@@ -615,23 +622,17 @@ FILE 的格式与 `pyim-dcache-export' 生成的文件格式相同，
     ;; pyim 使用这个 hook 来处理联想词。
     (run-hooks 'pyim-select-finish-hook)))
 
-(defun pyim-select-word-by-number (&optional n)
+(defun pyim-select-word-by-number (&optional num)
   "使用数字编号来选择对应的词条。"
   (interactive)
-  (if (or pyim-select-word-by-number n)
+  (if (or pyim-select-word-by-number num)
       (if (null (pyim-process-get-candidates))
           (progn
             (pyim-process-outcome-handle 'last-char)
             (pyim-process-terminate))
-        (let ((index (if (numberp n)
-                         (- n 1)
-                       0))
-              (end (pyim-page-end)))
-          (when (= index -1) (setq index 9))
-          (if (> (+ index (pyim-page-start)) end)
-              (pyim-page-refresh)
-            (pyim-process-set-candidate-position
-             (+ (pyim-page-start) index))
+        (let ((position (pyim-page-get-candidate-position-by-numeric-key num)))
+          (when position
+            (pyim-process-set-candidate-position position)
             (pyim-select-word))))
     ;; 有些输入法使用数字键编码，这种情况下，数字键就
     ;; 不能用来选词了。
@@ -664,11 +665,7 @@ FILE 的格式与 `pyim-dcache-export' 生成的文件格式相同，
   (pyim-process-terminate))
 
 ;; ** 中英文输入模式切换
-(defun pyim-toggle-input-ascii ()
-  "pyim 切换中英文输入模式。同时调整标点符号样式。"
-  (interactive)
-  (setq pyim-process-input-ascii
-        (not pyim-process-input-ascii)))
+(defalias 'pyim-toggle-input-ascii #'pyim-process-toggle-input-ascii)
 
 ;; ** 主辅输入法切换功能
 (defun pyim-toggle-assistant-scheme ()
@@ -681,8 +678,7 @@ FILE 的格式与 `pyim-dcache-export' 生成的文件格式相同，
       (progn
         (pyim-process-outcome-handle 'last-char)
         (pyim-process-terminate))
-    (setq pyim-assistant-scheme-enable
-          (not pyim-assistant-scheme-enable))
+    (pyim-scheme-toggle-assistant)
     (pyim-process-run)))
 
 ;; ** PYIM 输入操作命令
@@ -827,7 +823,7 @@ FILE 的格式与 `pyim-dcache-export' 生成的文件格式相同，
       (run-hooks 'pyim-convert-string-at-point-hook)
       (when (> length 0)
         (pyim-add-unread-command-events code)
-        (setq pyim-process-force-input-chinese t)))
+        (pyim-process-force-input-chinese)))
      ;; 当光标前的一个字符是标点符号时，半角/全角切换。
      ((pyim-string-match-p "[[:punct:]：－]" (pyim-char-before-to-string 0))
       (call-interactively 'pyim-punctuation-translate-at-point))

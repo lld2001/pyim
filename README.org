@@ -9,6 +9,25 @@
 
 * 不兼容更新
 
+** <2022-06-15 Wed> Do not require popup in pyim-page.el
+popup 是一个非 gnu elpa 包，pyim-page.el 不应该 require 它，需要用户自己手动
+require, 使用 popup tooltip 的用户需要在配置中添加：
+
+#+begin_src elisp
+(require 'popup)
+#+end_src
+
+** <2022-06-13 Mon> pyim-dcache-backend 所需的 package 需要用户手工加载了。
+
+以前 pyim 可以根据 pyim-dcache-backend 的取值自动加载需要的 package, 这样做虽然
+方便，但代码特别容易出现问题，考虑到 pyim 未来支持的后端不会有太大变化，我删除了
+这个功能，为了向后兼容，pyim 目前会自动加载 pyim-dregcache 包, 但这个兼容代码未
+来可能会删除，所以使用 pyim-dregcache 的用户，建议给自己的配置中添加：
+
+#+begin_src elisp
+(require 'pyim-dregcache)
+#+end_src
+
 ** <2022-05-29 Sun> pyim-cregexp-utils, pyim-cstring-utils 和 pyim-dict-manager 需要用户手动 require.
 
 为降低 pyim 代码的复杂度，减少 pyim 依赖包的数量，下面三个包不会自动加载，需要用
@@ -98,6 +117,14 @@ pyim 的目标是： *尽最大的努力成为一个好用的 Emacs 中文输入
 (require 'pyim)
 (require 'pyim-basedict)
 (require 'pyim-cregexp-utils)
+
+;; 如果使用 popup page tooltip, 就需要加载 popup 包。
+;; (require 'popup nil t)
+;; (setq pyim-page-tooltip 'popup)
+
+;; 如果使用 pyim-dregcache dcache 后端，就需要加载 pyim-dregcache 包。
+;; (require 'pyim-dregcache)
+;; (setq pyim-dcache-backend 'pyim-dregcache)
 
 (pyim-basedict-enable)
 
@@ -205,12 +232,20 @@ pyim 支持双拼输入模式，用户可以通过变量 `pyim-default-scheme' �
 ** 让选词框跟随光标
 用户可以通过下面的设置让 pyim 在 *光标处* 显示一个选词框：
 
-1. 使用 popup 包来绘制选词框 （emacs overlay 机制）
+1. 使用 popup 或者 popon 包来绘制选词框 （emacs overlay 机制）
    #+begin_example
+   (require 'popup)
    (setq pyim-page-tooltip 'popup)
    #+end_example
+
+   #+begin_example
+   (require 'popon)
+   (setq pyim-page-tooltip 'popon)
+   #+end_example
+
 2. 使用 posframe 来绘制选词框
    #+begin_example
+   (require 'posframe)
    (setq pyim-page-tooltip 'posframe)
    #+end_example
    注意：pyim 不会自动安装 posframe, 用户需要手动安装这个包，
@@ -371,6 +406,19 @@ pyim 当前内置两种指示器实现方式：
 
 * 开发
 请参考 [[file:Development.org][Development.org]] 文档
+
+
+* 试用
+在pyim项目根目录运行shell命令 `make runemacs' 试用最新的pyim。
+
+只有pyim和其依赖的包被载入。用户自己的emacs配置不会被载入。
+
+指定运行的Emacs版本用以下命令,
+#+begin_src sh
+EMACS=~/my-whatever-directory/bin/emacs make runemacs
+#+end_src
+
+Emacs启动后 "M-x toggle-input-method" 或按 "C-/" 打开输入法。
 * 捐赠
 您可以通过小额捐赠的方式支持 pyim 的开发工作，具体方式：
 
