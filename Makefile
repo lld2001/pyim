@@ -4,7 +4,8 @@ EMACS ?= emacs
 
 .PHONY: test lint clean deps compile
 
-EMACS_BATCH_OPTS=--batch --quick --directory . --directory .deps
+EMACS_GENERIC_OPTS=--quick --directory . --directory .deps
+EMACS_BATCH_OPTS:=--batch $(EMACS_GENERIC_OPTS)
 RM=@rm -rf
 
 XR_URL="https://git.savannah.gnu.org/cgit/emacs/elpa.git/plain/xr.el?h=externals/xr"
@@ -31,7 +32,7 @@ deps:
 	@if [ ! -f .deps/pyim-basedict.pyim ]; then curl -L $(BASEDICT_PYIM_URL) > .deps/pyim-basedict.pyim; fi;
 
 lint: deps
-	@$(EMACS) $(EMACS_BATCH_OPTS) --load ./tests/pyim-elint.el 2>&1 | grep -vE "pyim-cregexp.el:[0-9]+:Warning: Empty varlist in let|pyim-indicator.el:[0-9]+:Error: Call to undefined function: posframe-show" | grep -E "([Ee]rror|[Ww]arning):" && exit 1 || exit 0
+	@$(EMACS) $(EMACS_BATCH_OPTS) --load ./tests/pyim-elint.el 2>&1 | grep -E "([Ee]rror|[Ww]arning):" && exit 1 || exit 0
 
 compile: deps
 	$(RM) *.elc
@@ -41,3 +42,6 @@ compile: deps
 test: compile deps
 	@$(EMACS) $(EMACS_BATCH_OPTS) --load ./tests/pyim-tests.el
 	$(RM) pyim-tests-temp-*
+
+runemacs: deps
+	@$(EMACS) $(EMACS_GENERIC_OPTS) --load ./tests/pyim-emacs-init.el
