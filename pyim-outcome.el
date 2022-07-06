@@ -88,7 +88,7 @@ pyim 使用函数 `pyim-process-select-handle-char' 来处理特殊功能触发�
 方案下，这个快捷键设置是否合理有效，如果不是一个合理的设置，则使
 用拼音方案默认的 :prefer-triggers 。
 
-具体请参考 `pyim-outcome-get-trigger' 。"
+具体请参考 `pyim-outcome--get-trigger' 。"
   :type '(choice (const nil) string))
 
 (defcustom pyim-outcome-trigger-function 'pyim-outcome-trigger-function-default
@@ -99,7 +99,7 @@ pyim 使用函数 `pyim-process-select-handle-char' 来处理特殊功能触发�
 光标前面的文字内容。"
   :type 'function)
 
-(defvar pyim-outcome-history nil
+(defvar pyim-outcome--history nil
   "记录 pyim outcome 的变化的历史
 
 在 pyim 中 outcome 代表用户通过输入法选择，并最终插入到 buffer
@@ -123,12 +123,29 @@ pyim 使用函数 `pyim-process-select-handle-char' 来处理特殊功能触发�
   "用来临时保存 `pyim-outcome-magic-convert' 的结果.
 从而加快同一个字符串第二次的转换速度。")
 
-(pyim-register-local-variables '(pyim-outcome-history))
+(pyim-register-local-variables '(pyim-outcome--history))
 
 ;; ** 选词框相关函数
-(defun pyim-outcome-get (&optional n)
+(defun pyim-outcome-get ()
   "获取 outcome"
-  (nth (or n 0) pyim-outcome-history))
+  (pyim-outcome--get 0))
+
+(defun pyim-outcome--get (n)
+  "获取 outcome"
+  (nth n pyim-outcome--history))
+
+(defun pyim-outcome-add (outcome)
+  "添加 OUTCOME."
+  (push outcome pyim-outcome--history))
+
+(defun pyim-outcome-diff ()
+  "OUTCOME 的变化。"
+  (string-remove-prefix
+   (or (pyim-outcome--get 1) "") (pyim-outcome--get 0)))
+
+(defun pyim-outcome-erase ()
+  "清除 OUTCOME."
+  (setq pyim-outcome--history nil))
 
 (defun pyim-outcome-magic-convert (str)
   "用于处理 `pyim-outcome-magic-converter' 的函数。"
@@ -140,7 +157,11 @@ pyim 使用函数 `pyim-process-select-handle-char' 来处理特殊功能触发�
             result))
     str))
 
-(defun pyim-outcome-get-trigger ()
+(defun pyim-outcome-trigger-p (str)
+  "判断 STR 是否是一个 trigger."
+  (equal (pyim-outcome--get-trigger) str))
+
+(defun pyim-outcome--get-trigger ()
   "检查 `pyim-outcome-trigger' 是否为一个合理的 trigger char 。
 
 pyim 的 translate-trigger-char 要占用一个键位，为了防止用户
@@ -156,11 +177,13 @@ pyim 的 translate-trigger-char 要占用一个键位，为了防止用户
          (prefer-triggers (pyim-scheme-prefer-triggers
                            (pyim-scheme-current))))
     (if (pyim-string-match-p (regexp-quote user-trigger) first-char)
-        (progn
-          ;; (message "注意：pyim-outcome-trigger 设置和当前输入法冲突，使用推荐设置：\"%s\""
-          ;;          prefer-trigger)
-          (car prefer-triggers))
+        (car prefer-triggers)
       user-trigger)))
+
+(defun pyim-outcome-call-trigger-function ()
+  (when (functionp pyim-outcome-trigger-function)
+    (funcall pyim-outcome-trigger-function)
+    (message "PYIM: 运行 `pyim-outcome-trigger-function' 函数。")))
 
 (defun pyim-outcome-trigger-function-default (&optional no-space)
   "默认的 `pyim-outcome-trigger-function'.
