@@ -121,10 +121,10 @@ AUTO-BACKUP-THRESHOLD 倍, 那么原值将自动备份到 FILE 对应的备份�
          (orig-value (pyim-dcache-get-value-from-file file))
          (orig-length (pyim-dcache--value-length orig-value))
          (length (pyim-dcache--value-length value)))
-    (when (and (numberp auto-backup-threshold)
-               (< length (* auto-backup-threshold orig-length)))
-      (pyim-dcache-save-value-to-file orig-value backup-file)
-      (message "PYIM: 生成备份文件 %S, 请检查原文件 %S 是否损坏！！！" backup-file file))
+    ;; (when (and (numberp auto-backup-threshold)
+    ;;            (< length (* auto-backup-threshold orig-length)))
+    ;;   (pyim-dcache-save-value-to-file orig-value backup-file)
+    ;;   (message "PYIM: 生成备份文件 %S, 请检查原文件 %S 是否损坏！！！" backup-file file))
     (when value
       (with-temp-buffer
         (insert ";; -*- lisp-data -*-\n")
