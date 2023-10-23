@@ -771,11 +771,12 @@ pyim 使用的词库文件是简单的文本文件，编码 *强制* 为 \\='utf
     (let (export-lines)
       (maphash
        (lambda (key value)
-         (push
-          (if ignore-counts
-              (format "%s\n" key)
-            (format "%s %s\n" key value))
-          export-lines))
+         (when (> (length key) 1)
+           (push
+            (if ignore-counts
+                (format "%s\n" key)
+              (format "%s %s\n" key value))
+            export-lines)))
        pyim-dhashcache-iword2count)
       ;; 在默认情况下，用户选择过的词生成的缓存中存在的词条，
       ;; `pyim-dhashcache-iword2count' 中也一定存在，但如果用户
